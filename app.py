@@ -69,16 +69,24 @@ html,body,.stApp{background-color:var(--bg)!important;color:var(--text)!importan
 # --- ANNOTATIONS ---
 def load_annotations():
     if 'annotations' not in st.session_state:
+        # Try loading from local file
         try:
-            st.session_state.annotations = json.loads(Path(ANNOTATIONS_FILE).read_text())
-        except:
+            if os.path.exists(ANNOTATIONS_FILE):
+                with open(ANNOTATIONS_FILE, 'r', encoding='utf-8') as f:
+                    st.session_state.annotations = json.load(f)
+            else:
+                st.session_state.annotations = {}
+        except Exception as e:
             st.session_state.annotations = {}
     return st.session_state.annotations
 
 def save_annotations():
     try:
-        Path(ANNOTATIONS_FILE).write_text(json.dumps(st.session_state.annotations, indent=2))
-    except: pass
+        with open(ANNOTATIONS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(st.session_state.annotations, f, indent=2, ensure_ascii=False)
+        return True
+    except:
+        return False
 
 def trade_key(row):
     return f"{row['Ticker']}|{row['Datum']}|{row.get('Entry Datum','')}"
@@ -256,6 +264,27 @@ with st.sidebar:
     strat_filter = st.selectbox("Visa strategi", ["Alla"] + STRATEGIES[1:])
     st.markdown('<div class="section-header">INFO</div>', unsafe_allow_html=True)
     st.markdown(f'<div style="font-family:Space Mono,monospace;font-size:0.65rem;color:#555570;line-height:1.8;">KONTO: {ACCOUNT_ID or "–"}<br>UPPDATERAD: {datetime.now().strftime("%H:%M:%S")}</div>', unsafe_allow_html=True)
+
+    # Annotations export/import
+    st.markdown('<div class="section-header">ANTECKNINGAR</div>', unsafe_allow_html=True)
+    ann = load_annotations()
+    tagged_count = sum(1 for v in ann.values() if v.get('strategy','–') != '–' or v.get('grade','–') != '–')
+    st.markdown(f'<div style="font-family:Space Mono,monospace;font-size:0.65rem;color:#555570;">{tagged_count} taggade trades</div>', unsafe_allow_html=True)
+
+    if ann:
+        st.download_button("⬇ EXPORTERA", data=json.dumps(ann, indent=2, ensure_ascii=False),
+                           file_name="annotations.json", mime="application/json")
+
+    uploaded = st.file_uploader("⬆ IMPORTERA", type="json", label_visibility="collapsed")
+    if uploaded:
+        try:
+            imported = json.loads(uploaded.read().decode('utf-8'))
+            st.session_state.annotations = imported
+            save_annotations()
+            st.success(f"Importerade {len(imported)} anteckningar")
+            st.rerun()
+        except:
+            st.error("Ogiltig JSON-fil")
 
 
 # --- LOAD ---
@@ -456,7 +485,10 @@ with tab4:
                 st.session_state.annotations[tk] = {}
             st.session_state.annotations[tk]['strategy'] = new_strat
             st.session_state.annotations[tk]['grade'] = new_grade
-            save_annotations()
+            if save_annotations():
+                st.toast(f"✅ Sparad: {trade['Ticker']} — {new_strat} / {new_grade}")
+            else:
+                st.toast("⚠️ Sparad i sessionen men inte till fil (molnläge)")
 
         # Trade info
         col_i1, col_i2, col_i3, col_i4 = st.columns(4)
