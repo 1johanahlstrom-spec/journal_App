@@ -39,8 +39,10 @@ st.markdown("""
 :root{--bg:#0a0a0f;--surface:#111118;--border:#1e1e2e;--accent:#00ff88;--accent2:#ff3366;--text:#e8e8f0;--muted:#555570;--card:#13131c;}
 html,body,.stApp{background-color:var(--bg)!important;color:var(--text)!important;font-family:'Syne',sans-serif;}
 .stApp>header{background:transparent!important;}
-[data-testid="stSidebar"]{background:var(--surface)!important;border-right:1px solid var(--border)!important;}
+[data-testid="stSidebar"]{background:var(--surface)!important;border-right:1px solid var(--border)!important;min-width:300px!important;transform:none!important;}
 [data-testid="stSidebar"] *{color:var(--text)!important;}
+[data-testid="collapsedControl"]{color:var(--accent)!important;}
+[data-testid="collapsedControl"] svg{stroke:#00ff88!important;fill:#00ff88!important;width:24px!important;height:24px!important;}
 #MainMenu,footer,header{visibility:hidden;}
 .block-container{padding:2rem!important;max-width:100%!important;}
 .metric-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem;text-align:center;}
@@ -469,13 +471,24 @@ with tab4:
             chart_df = fetch_chart_data(trade['Ticker'], trade['Entry Datum'], trade['Datum'])
 
         if chart_df is not None and not chart_df.empty:
-            fig_chart = go.Figure()
+            from plotly.subplots import make_subplots
+            fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                vertical_spacing=0.03, row_heights=[0.75, 0.25])
+
             fig_chart.add_trace(go.Candlestick(
                 x=chart_df['Date'], open=chart_df['Open'], high=chart_df['High'],
                 low=chart_df['Low'], close=chart_df['Close'],
                 increasing_line_color='#00ff88', decreasing_line_color='#ff3366',
                 increasing_fillcolor='#00ff88', decreasing_fillcolor='#ff3366',
-                name='Pris'))
+                name='Pris'), row=1, col=1)
+
+            # Volume bars colored by price direction
+            vol_colors = ['#00ff88' if c >= o else '#ff3366'
+                          for c, o in zip(chart_df['Close'], chart_df['Open'])]
+            fig_chart.add_trace(go.Bar(
+                x=chart_df['Date'], y=chart_df['Volume'],
+                marker_color=vol_colors, opacity=0.4,
+                name='Volym', showlegend=False), row=2, col=1)
 
             # Entry marker
             entry_dt = pd.to_datetime(trade['Entry Datum'])
@@ -491,17 +504,19 @@ with tab4:
                     x=[entry_row['Date'].iloc[0]], y=[float(entry_row['Low'].iloc[0]) * 0.98],
                     mode='markers+text', marker=dict(symbol='triangle-up', size=16, color=entry_color),
                     text=['ENTRY'], textposition='bottom center', textfont=dict(color=entry_color, size=10),
-                    showlegend=False))
+                    showlegend=False), row=1, col=1)
             if not exit_row.empty:
                 fig_chart.add_trace(go.Scatter(
                     x=[exit_row['Date'].iloc[0]], y=[float(exit_row['High'].iloc[0]) * 1.02],
                     mode='markers+text', marker=dict(symbol='triangle-down', size=16, color=exit_color),
                     text=['EXIT'], textposition='top center', textfont=dict(color=exit_color, size=10),
-                    showlegend=False))
+                    showlegend=False), row=1, col=1)
 
-            fig_chart.update_layout(**PLOTLY_LAYOUT, height=400,
+            fig_chart.update_layout(**PLOTLY_LAYOUT, height=500,
                 title=f"{trade['Ticker']} — {trade['Entry Datum']} → {trade['Datum']}",
-                xaxis_rangeslider_visible=False)
+                xaxis_rangeslider_visible=False,
+                yaxis2=dict(gridcolor='#1e1e2e', linecolor='#1e1e2e', title='Volym'),
+                showlegend=False)
             st.plotly_chart(fig_chart, width='stretch')
         else:
             st.warning(f"Kunde inte hämta kursdata för {trade['Ticker']}. Kontrollera att yfinance är installerat.")
