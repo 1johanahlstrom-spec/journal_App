@@ -1,8 +1,6 @@
 # Secrets - ALDRIG pusha dessa
 .env
 credentials.json
-*.json
-!requirements.txt
 
 # Python
 __pycache__/
