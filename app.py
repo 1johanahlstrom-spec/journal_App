@@ -547,6 +547,7 @@ with tab4:
             fig_chart.update_layout(**PLOTLY_LAYOUT, height=500,
                 title=f"{trade['Ticker']} — {trade['Entry Datum']} → {trade['Datum']}",
                 xaxis_rangeslider_visible=False,
+                xaxis_rangebreaks=[dict(bounds=["sat","mon"])],
                 yaxis2=dict(gridcolor='#1e1e2e', linecolor='#1e1e2e', title='Volym'),
                 showlegend=False)
             st.plotly_chart(fig_chart, width='stretch')
