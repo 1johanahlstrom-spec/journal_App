@@ -41,8 +41,10 @@ html,body,.stApp{background-color:var(--bg)!important;color:var(--text)!importan
 .stApp>header{background:transparent!important;}
 [data-testid="stSidebar"]{background:var(--surface)!important;border-right:1px solid var(--border)!important;}
 [data-testid="stSidebar"] *{color:var(--text)!important;}
-[data-testid="collapsedControl"]{color:#00ff88!important;background:var(--surface)!important;border:1px solid #00ff88!important;border-radius:6px!important;padding:4px!important;margin:8px!important;}
-[data-testid="collapsedControl"] svg{stroke:#00ff88!important;width:20px!important;height:20px!important;}
+[data-testid="collapsedControl"]{color:#00ff88!important;background:#111118!important;border:2px solid #00ff88!important;border-radius:8px!important;padding:8px!important;margin:10px!important;position:fixed!important;top:8px!important;left:8px!important;z-index:999999!important;opacity:1!important;visibility:visible!important;}
+[data-testid="collapsedControl"] svg{stroke:#00ff88!important;width:24px!important;height:24px!important;}
+[data-testid="collapsedControl"]:hover{background:#00ff88!important;}
+[data-testid="collapsedControl"]:hover svg{stroke:#0a0a0f!important;}
 #MainMenu,footer,header{visibility:hidden;}
 .block-container{padding:2rem!important;max-width:100%!important;}
 .metric-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem;text-align:center;}
