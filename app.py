@@ -193,6 +193,7 @@ def compute_fifo(all_trades):
             'Antal': float(t.get('qty') or 0), 'Pris': float(t.get('price') or 0),
             'Tidsstämpel': pd.to_datetime(f"{trade_date}T{exec_time}", errors='coerce'),
             'Datum': trade_date,
+            'Courtage': float(t.get('totalFees') or 0) + float(t.get('commission') or 0),
         })
     df = pd.DataFrame(rows).sort_values('Tidsstämpel').reset_index(drop=True)
     valid_trades = []
@@ -204,47 +205,70 @@ def compute_fifo(all_trades):
         for _, row in group.iterrows():
             qty, price, side = abs(float(row['Antal'])), abs(float(row['Pris'])), row['Side']
             ts, datum = row['Tidsstämpel'], row['Datum']
+            courtage = float(row['Courtage'])
             if math.isnan(price) or qty == 0 or price == 0: continue
 
+            # Set entry time when opening from flat
             if abs(position) < 0.01 and qty > 0:
                 entry_time, entry_date = ts, datum
 
             if side == 'BUY':
                 if position < -0.01:
-                    remaining, pnl, cost = qty, 0.0, 0.0
+                    # Closing short (fully or partially)
+                    close_qty = min(qty, abs(position))  # only close what we have
+                    remaining, pnl, cost = close_qty, 0.0, 0.0
                     while remaining > 0.01 and short_fifo:
                         oq, op = short_fifo[0]; m = min(remaining, oq)
                         pnl += m*(op-price); cost += m*op
                         remaining -= m; oq -= m
                         if oq < 0.01: short_fifo.pop(0)
                         else: short_fifo[0] = (oq, op)
-                    pct = (pnl/cost*100) if cost > 0 else 0
-                    dur = round((ts - entry_time).total_seconds()/60) if entry_time else None
-                    valid_trades.append({'Ticker':symbol, 'Vinst ($)':round(pnl,2), 'Vinst %':round(pct,1),
-                        'Riktning':'SHORT', 'Datum':datum, 'Entry Datum':entry_date or datum,
-                        'Tidsstämpel':ts, 'Hålltid (min)':dur})
-                    if remaining > 0.01: long_fifo.append((remaining, price))
-                    if abs(position+qty) < 0.01: entry_time = entry_date = None
+                    if cost > 0:
+                        pct = (pnl/cost*100)
+                        dur = round((ts - entry_time).total_seconds()/60) if entry_time else None
+                        valid_trades.append({'Ticker':symbol, 'Vinst ($)':round(pnl,2), 'Vinst %':round(pct,1),
+                            'Riktning':'SHORT', 'Datum':datum, 'Entry Datum':entry_date or datum,
+                            'Tidsstämpel':ts, 'Hålltid (min)':dur, 'Courtage':courtage})
+                    # Position flip: buy more than short position → open long
+                    flip_qty = qty - close_qty
+                    new_position = position + qty
+                    if abs(new_position) < 0.01:
+                        entry_time = entry_date = None  # fully closed
+                    elif new_position > 0.01 and position < -0.01:
+                        # Flipped to long
+                        entry_time, entry_date = ts, datum
+                        long_fifo.append((flip_qty, price))
                 else:
+                    # Opening/adding to long
                     if abs(position) < 0.01: entry_time, entry_date = ts, datum
                     long_fifo.append((qty, price))
                 position += qty
-            else:
+
+            else:  # SELL
                 if position > 0.01:
-                    remaining, pnl, cost = qty, 0.0, 0.0
+                    # Closing long (fully or partially)
+                    close_qty = min(qty, position)
+                    remaining, pnl, cost = close_qty, 0.0, 0.0
                     while remaining > 0.01 and long_fifo:
                         oq, op = long_fifo[0]; m = min(remaining, oq)
                         pnl += m*(price-op); cost += m*op
                         remaining -= m; oq -= m
                         if oq < 0.01: long_fifo.pop(0)
                         else: long_fifo[0] = (oq, op)
-                    pct = (pnl/cost*100) if cost > 0 else 0
-                    dur = round((ts - entry_time).total_seconds()/60) if entry_time else None
-                    valid_trades.append({'Ticker':symbol, 'Vinst ($)':round(pnl,2), 'Vinst %':round(pct,1),
-                        'Riktning':'LONG', 'Datum':datum, 'Entry Datum':entry_date or datum,
-                        'Tidsstämpel':ts, 'Hålltid (min)':dur})
-                    if remaining > 0.01: short_fifo.append((remaining, price))
-                    if abs(position-qty) < 0.01: entry_time = entry_date = None
+                    if cost > 0:
+                        pct = (pnl/cost*100)
+                        dur = round((ts - entry_time).total_seconds()/60) if entry_time else None
+                        valid_trades.append({'Ticker':symbol, 'Vinst ($)':round(pnl,2), 'Vinst %':round(pct,1),
+                            'Riktning':'LONG', 'Datum':datum, 'Entry Datum':entry_date or datum,
+                            'Tidsstämpel':ts, 'Hålltid (min)':dur, 'Courtage':courtage})
+                    # Position flip: sell more than long position → open short
+                    flip_qty = qty - close_qty
+                    new_position = position - qty
+                    if abs(new_position) < 0.01:
+                        entry_time = entry_date = None
+                    elif new_position < -0.01 and position > 0.01:
+                        entry_time, entry_date = ts, datum
+                        short_fifo.append((flip_qty, price))
                 else:
                     if abs(position) < 0.01: entry_time, entry_date = ts, datum
                     short_fifo.append((qty, price))
@@ -395,6 +419,16 @@ if open_pos:
             st.info("Inga nyheter hittades.")
 
 
+# --- COURTAGE (from raw API data) ---
+courtage_df = pd.DataFrame([{
+    'Datum': (t.get('tradeDate') or '').split('T')[0],
+    'Courtage': float(t.get('totalFees') or 0) + float(t.get('commission') or 0),
+} for t in all_trades])
+courtage_df['Datum_dt'] = pd.to_datetime(courtage_df['Datum'], errors='coerce')
+courtage_df = courtage_df[(courtage_df['Datum_dt'] >= pd.Timestamp(date_from)) &
+                           (courtage_df['Datum_dt'] <= pd.Timestamp(date_to))]
+total_courtage = courtage_df['Courtage'].sum()
+
 # --- PERIOD STATS ---
 if not filtered.empty:
     wins_df = filtered[filtered['Vinst ($)'] > 0]
@@ -431,6 +465,20 @@ if not filtered.empty:
     with t2: st.markdown(mcard("FÖRLORANDE", avg_loss_time or 0, "time"), unsafe_allow_html=True)
     all_time = filtered['Hålltid (min)'].dropna().mean()
     with t3: st.markdown(mcard("ALLA", all_time or 0, "time"), unsafe_allow_html=True)
+
+    # Courtage
+    st.markdown('<div class="section-header">COURTAGE</div>', unsafe_allow_html=True)
+    daily_courtage = courtage_df.groupby('Datum')['Courtage'].sum().reset_index().sort_values('Datum')
+    avg_daily_c = daily_courtage['Courtage'].mean() if not daily_courtage.empty else 0
+    monthly_courtage = courtage_df.copy()
+    monthly_courtage['Månad'] = monthly_courtage['Datum_dt'].dt.to_period('M').astype(str)
+    avg_monthly_c = monthly_courtage.groupby('Månad')['Courtage'].sum().mean() if not monthly_courtage.empty else 0
+
+    cc1, cc2, cc3, cc4 = st.columns(4)
+    with cc1: st.markdown(mcard("TOTALT COURTAGE", -total_courtage, "dollar"), unsafe_allow_html=True)
+    with cc2: st.markdown(mcard("SNITT / DAG", -avg_daily_c, "dollar"), unsafe_allow_html=True)
+    with cc3: st.markdown(mcard("SNITT / MÅNAD", -avg_monthly_c, "dollar"), unsafe_allow_html=True)
+    with cc4: st.markdown(mcard("NETTO EFTER COURTAGE", total_pnl - total_courtage, "dollar"), unsafe_allow_html=True)
 
 
 # --- TABS ---
@@ -626,15 +674,24 @@ with tab4:
         by_month['AvgVinstPct']   = by_month['AvgVinstPct'].round(1)
         by_month['AvgFörlustPct'] = by_month['AvgFörlustPct'].round(1)
 
-        colors = ['#00ff88' if v > 0 else '#ff3366' for v in by_month['PnL']]
-        fig4 = go.Figure(go.Bar(x=by_month['Månad'], y=by_month['PnL'], marker_color=colors,
+        # Add courtage per month
+        mc = courtage_df.copy()
+        mc['Månad'] = mc['Datum_dt'].dt.to_period('M').astype(str)
+        monthly_c = mc.groupby('Månad')['Courtage'].sum().reset_index()
+        by_month = by_month.merge(monthly_c, on='Månad', how='left').fillna(0)
+        by_month['Courtage'] = by_month['Courtage'].round(2)
+        by_month['Netto'] = (by_month['PnL'] - by_month['Courtage']).round(2)
+
+        colors = ['#00ff88' if v > 0 else '#ff3366' for v in by_month['Netto']]
+        fig4 = go.Figure(go.Bar(x=by_month['Månad'], y=by_month['Netto'], marker_color=colors,
             hovertemplate='%{x}<br>$%{y:,.0f}<extra></extra>',
-            text=[f"${v:+,.0f}" for v in by_month['PnL']], textposition='outside',
-            textfont=dict(color=['#00ff88' if v > 0 else '#ff3366' for v in by_month['PnL']])))
-        fig4.update_layout(**PLOTLY_LAYOUT, height=280, title='Månadsvis P/L', xaxis_type='category')
+            text=[f"${v:+,.0f}" for v in by_month['Netto']], textposition='outside',
+            textfont=dict(color=['#00ff88' if v > 0 else '#ff3366' for v in by_month['Netto']])))
+        fig4.update_layout(**PLOTLY_LAYOUT, height=280, title='Månadsvis P/L (efter courtage)', xaxis_type='category')
         st.plotly_chart(fig4, width='stretch')
-        st.dataframe(by_month[['Månad','Trades','Vinster','Förluster','Win%','PnL','AvgVinstPct','AvgFörlustPct']]
-            .rename(columns={'PnL':'P/L ($)','AvgVinstPct':'Avg Vinst %','AvgFörlustPct':'Avg Förlust %'}),
+        st.dataframe(by_month[['Månad','Trades','Vinster','Förluster','Win%','PnL','Courtage','Netto','AvgVinstPct','AvgFörlustPct']]
+            .rename(columns={'PnL':'Brutto ($)','Courtage':'Courtage ($)','Netto':'Netto ($)',
+                             'AvgVinstPct':'Avg Vinst %','AvgFörlustPct':'Avg Förlust %'}),
             width='stretch', hide_index=True)
     else: st.info("Inga trades i valt intervall.")
 
