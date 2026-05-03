@@ -32,19 +32,15 @@ GRADES     = ["–", "A — Jättebra", "B — Bra", "C — Dålig"]
 ANNOTATIONS_FILE = os.path.join(base_dir, "annotations.json")
 
 # --- PAGE ---
-st.set_page_config(page_title="Trading Journal", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Trading Journal", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap');
 :root{--bg:#0a0a0f;--surface:#111118;--border:#1e1e2e;--accent:#00ff88;--accent2:#ff3366;--text:#e8e8f0;--muted:#555570;--card:#13131c;}
 html,body,.stApp{background-color:var(--bg)!important;color:var(--text)!important;font-family:'Syne',sans-serif;}
 .stApp>header{background:transparent!important;}
-[data-testid="stSidebar"]{background:var(--surface)!important;border-right:1px solid var(--border)!important;}
-[data-testid="stSidebar"] *{color:var(--text)!important;}
-[data-testid="collapsedControl"]{color:#00ff88!important;background:#111118!important;border:2px solid #00ff88!important;border-radius:8px!important;padding:8px!important;margin:10px!important;position:fixed!important;top:8px!important;left:8px!important;z-index:999999!important;opacity:1!important;visibility:visible!important;}
-[data-testid="collapsedControl"] svg{stroke:#00ff88!important;width:24px!important;height:24px!important;}
-[data-testid="collapsedControl"]:hover{background:#00ff88!important;}
-[data-testid="collapsedControl"]:hover svg{stroke:#0a0a0f!important;}
+[data-testid="stSidebar"]{display:none!important;}
+[data-testid="collapsedControl"]{display:none!important;}
 #MainMenu,footer,header{visibility:hidden;}
 .block-container{padding:2rem!important;max-width:100%!important;}
 .metric-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem;text-align:center;}
@@ -251,42 +247,40 @@ def mcard(label, value, fmt="dollar", sub=None):
 # --- HEADER ---
 st.markdown("""<div class="app-header"><span class="app-title">TRADING JOURNAL</span><span class="app-subtitle">// TRADEZERO ACCOUNT ANALYTICS</span></div>""", unsafe_allow_html=True)
 
-# --- SIDEBAR ---
-with st.sidebar:
-    st.markdown('<div class="section-header">KONTROLL</div>', unsafe_allow_html=True)
+# --- CONTROLS (top bar instead of sidebar) ---
+ctrl_col1, ctrl_col2 = st.columns([3, 1])
+with ctrl_col1:
+    with st.expander("⚙ FILTER & INSTÄLLNINGAR", expanded=False):
+        fc1, fc2, fc3, fc4, fc5 = st.columns(5)
+        with fc1:
+            date_from = st.date_input("Från datum", value=datetime(2026, 1, 1))
+        with fc2:
+            date_to = st.date_input("Till datum", value=datetime.today())
+        with fc3:
+            show_long  = st.checkbox("LONG",  value=True)
+            show_short = st.checkbox("SHORT", value=True)
+        with fc4:
+            strat_filter = st.selectbox("Strategi", ["Alla"] + STRATEGIES[1:])
+        with fc5:
+            ann = load_annotations()
+            tagged_count = sum(1 for v in ann.values() if v.get('strategy','–') != '–' or v.get('grade','–') != '–')
+            st.caption(f"{tagged_count} taggade trades")
+            if ann:
+                st.download_button("⬇ EXPORTERA", data=json.dumps(ann, indent=2, ensure_ascii=False),
+                                   file_name="annotations.json", mime="application/json")
+            uploaded = st.file_uploader("⬆ IMPORTERA", type="json", label_visibility="collapsed")
+            if uploaded:
+                try:
+                    imported = json.loads(uploaded.read().decode('utf-8'))
+                    st.session_state.annotations = imported
+                    save_annotations()
+                    st.success(f"Importerade {len(imported)} anteckningar")
+                    st.rerun()
+                except:
+                    st.error("Ogiltig JSON-fil")
+with ctrl_col2:
     if st.button("↻  UPPDATERA DATA"):
         st.cache_data.clear(); st.rerun()
-    st.markdown('<div class="section-header">FILTER</div>', unsafe_allow_html=True)
-    date_from = st.date_input("Från datum", value=datetime(2026, 1, 1))
-    date_to   = st.date_input("Till datum",  value=datetime.today())
-    st.markdown('<div class="section-header">RIKTNING</div>', unsafe_allow_html=True)
-    show_long  = st.checkbox("LONG",  value=True)
-    show_short = st.checkbox("SHORT", value=True)
-    st.markdown('<div class="section-header">STRATEGI</div>', unsafe_allow_html=True)
-    strat_filter = st.selectbox("Visa strategi", ["Alla"] + STRATEGIES[1:])
-    st.markdown('<div class="section-header">INFO</div>', unsafe_allow_html=True)
-    st.markdown(f'<div style="font-family:Space Mono,monospace;font-size:0.65rem;color:#555570;line-height:1.8;">KONTO: {ACCOUNT_ID or "–"}<br>UPPDATERAD: {datetime.now().strftime("%H:%M:%S")}</div>', unsafe_allow_html=True)
-
-    # Annotations export/import
-    st.markdown('<div class="section-header">ANTECKNINGAR</div>', unsafe_allow_html=True)
-    ann = load_annotations()
-    tagged_count = sum(1 for v in ann.values() if v.get('strategy','–') != '–' or v.get('grade','–') != '–')
-    st.markdown(f'<div style="font-family:Space Mono,monospace;font-size:0.65rem;color:#555570;">{tagged_count} taggade trades</div>', unsafe_allow_html=True)
-
-    if ann:
-        st.download_button("⬇ EXPORTERA", data=json.dumps(ann, indent=2, ensure_ascii=False),
-                           file_name="annotations.json", mime="application/json")
-
-    uploaded = st.file_uploader("⬆ IMPORTERA", type="json", label_visibility="collapsed")
-    if uploaded:
-        try:
-            imported = json.loads(uploaded.read().decode('utf-8'))
-            st.session_state.annotations = imported
-            save_annotations()
-            st.success(f"Importerade {len(imported)} anteckningar")
-            st.rerun()
-        except:
-            st.error("Ogiltig JSON-fil")
 
 
 # --- LOAD ---
