@@ -129,16 +129,21 @@ def fetch_positions():
 def fetch_chart_data(ticker, start_date, end_date):
     try:
         import yfinance as yf
-        start = (pd.to_datetime(start_date) - timedelta(days=15)).strftime('%Y-%m-%d')
+        start = (pd.to_datetime(start_date) - timedelta(days=45)).strftime('%Y-%m-%d')
         end   = (pd.to_datetime(end_date)   + timedelta(days=10)).strftime('%Y-%m-%d')
-        df = yf.download(ticker, start=start, end=end, progress=False)
+        df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+        if df.empty:
+            # Try with common suffixes for different exchanges
+            for suffix in ['.ST', '.L', '.TO']:
+                df = yf.download(ticker + suffix, start=start, end=end, progress=False, auto_adjust=True)
+                if not df.empty: break
         if df.empty: return None
-        # yfinance returns MultiIndex columns for single ticker, flatten
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         df = df.reset_index()
         return df
-    except: return None
+    except Exception as e:
+        return str(e)
 
 
 # --- FIFO ENGINE ---
@@ -265,9 +270,10 @@ with ctrl_col1:
             ann = load_annotations()
             tagged_count = sum(1 for v in ann.values() if v.get('strategy','–') != '–' or v.get('grade','–') != '–')
             st.caption(f"{tagged_count} taggade trades")
-            if ann:
-                st.download_button("⬇ EXPORTERA", data=json.dumps(ann, indent=2, ensure_ascii=False),
-                                   file_name="annotations.json", mime="application/json")
+            if st.session_state.get('annotations'):
+                st.download_button("⬇ EXPORTERA",
+                    data=json.dumps(st.session_state.annotations, indent=2, ensure_ascii=False),
+                    file_name="annotations.json", mime="application/json")
             uploaded = st.file_uploader("⬆ IMPORTERA", type="json", label_visibility="collapsed")
             if uploaded:
                 try:
@@ -463,28 +469,31 @@ with tab4:
         trade = filtered.sort_values('Datum', ascending=False).iloc[selected_idx]
         tk = trade_key(trade)
 
-        # Strategy + Grade
-        col_s, col_g = st.columns(2)
+        # Strategy + Grade + Save
+        col_s, col_g, col_save = st.columns([2, 2, 1])
         with col_s:
-            curr_strat = annotations.get(tk, {}).get('strategy', '–')
+            curr_strat = st.session_state.annotations.get(tk, {}).get('strategy', '–')
             new_strat = st.selectbox("Strategi", STRATEGIES,
                 index=STRATEGIES.index(curr_strat) if curr_strat in STRATEGIES else 0,
                 key=f"strat_{tk}")
         with col_g:
-            curr_grade = annotations.get(tk, {}).get('grade', '–')
+            curr_grade = st.session_state.annotations.get(tk, {}).get('grade', '–')
             new_grade = st.selectbox("Betyg", GRADES,
                 index=GRADES.index(curr_grade) if curr_grade in GRADES else 0,
                 key=f"grade_{tk}")
-
-        if new_strat != curr_strat or new_grade != curr_grade:
-            if tk not in st.session_state.annotations:
-                st.session_state.annotations[tk] = {}
-            st.session_state.annotations[tk]['strategy'] = new_strat
-            st.session_state.annotations[tk]['grade'] = new_grade
-            if save_annotations():
-                st.toast(f"✅ Sparad: {trade['Ticker']} — {new_strat} / {new_grade}")
-            else:
-                st.toast("⚠️ Sparad i sessionen men inte till fil (molnläge)")
+        with col_save:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("💾 SPARA", key=f"save_{tk}"):
+                if tk not in st.session_state.annotations:
+                    st.session_state.annotations[tk] = {}
+                st.session_state.annotations[tk]['strategy'] = new_strat
+                st.session_state.annotations[tk]['grade'] = new_grade
+                saved = save_annotations()
+                if saved:
+                    st.success(f"Sparad: {trade['Ticker']} — {new_strat} / {new_grade}")
+                else:
+                    st.warning("Sparad i sessionen. Exportera JSON för att behålla.")
+                st.rerun()
 
         # Trade info
         col_i1, col_i2, col_i3, col_i4 = st.columns(4)
@@ -498,7 +507,7 @@ with tab4:
         with st.spinner(f"Hämtar kursdata för {trade['Ticker']}..."):
             chart_df = fetch_chart_data(trade['Ticker'], trade['Entry Datum'], trade['Datum'])
 
-        if chart_df is not None and not chart_df.empty:
+        if chart_df is not None and not isinstance(chart_df, str) and not chart_df.empty:
             from plotly.subplots import make_subplots
             fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True,
                 vertical_spacing=0.03, row_heights=[0.75, 0.25])
@@ -510,13 +519,14 @@ with tab4:
                 increasing_fillcolor='#00ff88', decreasing_fillcolor='#ff3366',
                 name='Pris'), row=1, col=1)
 
-            # Volume bars colored by price direction
-            vol_colors = ['#00ff88' if c >= o else '#ff3366'
-                          for c, o in zip(chart_df['Close'], chart_df['Open'])]
-            fig_chart.add_trace(go.Bar(
-                x=chart_df['Date'], y=chart_df['Volume'],
-                marker_color=vol_colors, opacity=0.4,
-                name='Volym', showlegend=False), row=2, col=1)
+            # Volume bars colored by price direction (if available)
+            if 'Volume' in chart_df.columns and chart_df['Volume'].sum() > 0:
+                vol_colors = ['#00ff88' if c >= o else '#ff3366'
+                              for c, o in zip(chart_df['Close'], chart_df['Open'])]
+                fig_chart.add_trace(go.Bar(
+                    x=chart_df['Date'], y=chart_df['Volume'],
+                    marker_color=vol_colors, opacity=0.4,
+                    name='Volym', showlegend=False), row=2, col=1)
 
             # Entry marker
             entry_dt = pd.to_datetime(trade['Entry Datum'])
@@ -548,25 +558,33 @@ with tab4:
                 showlegend=False)
             st.plotly_chart(fig_chart, width='stretch')
         else:
-            st.warning(f"Kunde inte hämta kursdata för {trade['Ticker']}. Kontrollera att yfinance är installerat.")
+            if isinstance(chart_df, str):
+                st.warning(f"Kunde inte hämta kursdata för {trade['Ticker']}: {chart_df}")
+            else:
+                st.warning(f"Ingen kursdata tillgänglig för {trade['Ticker']} (tickern kanske inte finns på Yahoo Finance)")
 
         # Notes
-        curr_notes = annotations.get(tk, {}).get('notes', '')
+        curr_notes = st.session_state.annotations.get(tk, {}).get('notes', '')
         new_notes = st.text_area("Anteckningar", value=curr_notes, key=f"notes_{tk}", height=80,
                                   placeholder="Skriv anteckningar om denna trade...")
-        if new_notes != curr_notes:
+        if st.button("💾 SPARA ANTECKNING", key=f"savenote_{tk}"):
             if tk not in st.session_state.annotations: st.session_state.annotations[tk] = {}
             st.session_state.annotations[tk]['notes'] = new_notes
             save_annotations()
+            st.success("Anteckning sparad")
+            st.rerun()
     else:
         st.info("Inga trades i valt intervall.")
 
 
 with tab5:
     if not filtered.empty:
-        display = filtered[['Datum','Entry Datum','Ticker','Riktning','Vinst ($)','Vinst %','Strategi','Betyg','Hålltid (min)']].copy()
-        display['Hålltid'] = display['Hålltid (min)'].apply(fmt_duration)
-        display = display.drop(columns=['Hålltid (min)']).sort_values('Datum', ascending=False)
+        display = filtered[['Datum','Entry Datum','Ticker','Riktning','Vinst ($)','Vinst %','Hålltid (min)']].copy()
+        display['_key'] = filtered['_key']
+        display['Strategi'] = display['_key'].map(lambda k: st.session_state.annotations.get(k, {}).get('strategy', '–'))
+        display['Betyg']    = display['_key'].map(lambda k: st.session_state.annotations.get(k, {}).get('grade', '–'))
+        display['Hålltid']  = display['Hålltid (min)'].apply(fmt_duration)
+        display = display.drop(columns=['Hålltid (min)', '_key']).sort_values('Datum', ascending=False)
         def color_pnl(val):
             if isinstance(val, (int, float)):
                 return f'color: {"#00ff88" if val > 0 else "#ff3366" if val < 0 else "#888899"};'
