@@ -580,7 +580,6 @@ with tab1:
         daily['Kumulativ'] = daily['Vinst ($)'].cumsum()
         daily['Peak'] = daily['Kumulativ'].cummax()
         daily['Drawdown'] = daily['Kumulativ'] - daily['Peak']
-        daily['Drawdown %'] = (daily['Drawdown'] / daily['Peak'].replace(0, 1) * 100)
 
         # Equity curve + drawdown
         from plotly.subplots import make_subplots
@@ -608,13 +607,13 @@ with tab1:
 
         # Drawdown stats
         max_dd = daily['Drawdown'].min()
-        max_dd_pct = daily['Drawdown %'].min()
         max_dd_date = daily.loc[daily['Drawdown'].idxmin(), 'Datum'] if max_dd < 0 else '–'
+        current_dd = daily['Drawdown'].iloc[-1] if len(daily) > 0 else 0
 
         d1, d2, d3 = st.columns(3)
         with d1: st.markdown(mcard("MAX DRAWDOWN", max_dd, "dollar"), unsafe_allow_html=True)
-        with d2: st.markdown(mcard("MAX DRAWDOWN", max_dd_pct if max_dd < 0 else 0, "pct"), unsafe_allow_html=True)
-        with d3: st.markdown(mcard("DATUM", 0, "raw", sub=str(max_dd_date)), unsafe_allow_html=True)
+        with d2: st.markdown(mcard("NUVARANDE DRAWDOWN", current_dd, "dollar"), unsafe_allow_html=True)
+        with d3: st.markdown(mcard("MAX DD DATUM", 0, "raw", sub=str(max_dd_date)), unsafe_allow_html=True)
 
         # Daily P/L bars
         st.markdown('<div class="section-header">DAGLIG P/L</div>', unsafe_allow_html=True)
