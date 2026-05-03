@@ -669,15 +669,23 @@ with tab5:
     st.caption(f"{len(raw_df)} rader | Rådata direkt från TradeZero API")
 
 
-# --- STRATEGY STATS (bottom) ---
+# --- STRATEGY & GRADE STATS (bottom) ---
 if not filtered.empty:
-    tagged = filtered[filtered['Strategi'] != '–']
-    if not tagged.empty:
+    # Re-read annotations for filtered data
+    filtered_ann = filtered.copy()
+    filtered_ann['Strategi'] = filtered_ann['_key'].map(lambda k: st.session_state.annotations.get(k, {}).get('strategy', '–'))
+    filtered_ann['Betyg'] = filtered_ann['_key'].map(lambda k: st.session_state.annotations.get(k, {}).get('grade', '–'))
+
+    tagged_strat = filtered_ann[filtered_ann['Strategi'] != '–']
+    tagged_grade = filtered_ann[filtered_ann['Betyg'] != '–']
+
+    if not tagged_strat.empty:
         st.markdown('<div class="section-header">STATISTIK PER STRATEGI</div>', unsafe_allow_html=True)
-        by_strat = tagged.groupby('Strategi').agg(
+        by_strat = tagged_strat.groupby('Strategi').agg(
             Trades=('Vinst ($)', 'count'), PnL=('Vinst ($)', 'sum'),
             WinRate=('Vinst ($)', lambda x: (x>0).sum()/len(x)*100),
             AvgPct=('Vinst %', 'mean'),
+            AvgHåll=('Hålltid (min)', lambda x: x.dropna().mean()),
         ).reset_index()
         by_strat['PnL']     = by_strat['PnL'].round(0)
         by_strat['WinRate'] = by_strat['WinRate'].round(1)
@@ -688,5 +696,54 @@ if not filtered.empty:
             with col:
                 st.markdown(mcard(row['Strategi'].split("/")[0].strip().upper(),
                     row['PnL'], "dollar",
-                    sub=f"{int(row['Trades'])} trades | {row['WinRate']:.0f}% win | avg {row['AvgPct']:+.0f}%"),
+                    sub=f"{int(row['Trades'])} trades | {row['WinRate']:.0f}% win | avg {row['AvgPct']:+.0f}% | {fmt_duration(row['AvgHåll'])}"),
                     unsafe_allow_html=True)
+
+    if not tagged_grade.empty:
+        st.markdown('<div class="section-header">STATISTIK PER BETYG</div>', unsafe_allow_html=True)
+        grade_order = ['A', 'B', 'C', 'F']
+        by_grade = tagged_grade.groupby('Betyg').agg(
+            Trades=('Vinst ($)', 'count'), PnL=('Vinst ($)', 'sum'),
+            WinRate=('Vinst ($)', lambda x: (x>0).sum()/len(x)*100),
+            AvgPct=('Vinst %', 'mean'),
+            AvgDollar=('Vinst ($)', 'mean'),
+            AvgHåll=('Hålltid (min)', lambda x: x.dropna().mean()),
+        ).reset_index()
+        by_grade['PnL']       = by_grade['PnL'].round(0)
+        by_grade['WinRate']   = by_grade['WinRate'].round(1)
+        by_grade['AvgPct']    = by_grade['AvgPct'].round(1)
+        by_grade['AvgDollar'] = by_grade['AvgDollar'].round(0)
+        # Sort by grade order
+        by_grade['_sort'] = by_grade['Betyg'].map(lambda g: grade_order.index(g) if g in grade_order else 99)
+        by_grade = by_grade.sort_values('_sort')
+
+        cols = st.columns(len(by_grade))
+        for col, (_, row) in zip(cols, by_grade.iterrows()):
+            grade_color = {'A':'#00ff88','B':'#33aa66','C':'#ff6633','F':'#ff3366'}.get(row['Betyg'],'#888899')
+            with col:
+                st.markdown(
+                    f'<div class="metric-card">'
+                    f'<div class="metric-label">BETYG</div>'
+                    f'<div class="metric-value" style="color:{grade_color};font-size:2rem;">{row["Betyg"]}</div>'
+                    f'<div class="metric-sub" style="color:#9999aa;line-height:1.8;">'
+                    f'{int(row["Trades"])} trades<br>'
+                    f'Win rate: {row["WinRate"]:.0f}%<br>'
+                    f'Snitt: {row["AvgPct"]:+.0f}% / ${row["AvgDollar"]:+,.0f}<br>'
+                    f'Hålltid: {fmt_duration(row["AvgHåll"])}'
+                    f'</div></div>',
+                    unsafe_allow_html=True)
+
+    # Combined table if both exist
+    if not tagged_grade.empty and not tagged_strat.empty:
+        both = filtered_ann[(filtered_ann['Strategi'] != '–') & (filtered_ann['Betyg'] != '–')]
+        if not both.empty:
+            st.markdown('<div class="section-header">STRATEGI × BETYG</div>', unsafe_allow_html=True)
+            cross = both.groupby(['Strategi','Betyg']).agg(
+                Trades=('Vinst ($)', 'count'),
+                AvgPct=('Vinst %', 'mean'),
+                WinRate=('Vinst ($)', lambda x: (x>0).sum()/len(x)*100),
+            ).reset_index()
+            cross['AvgPct']  = cross['AvgPct'].round(1)
+            cross['WinRate'] = cross['WinRate'].round(1)
+            st.dataframe(cross.rename(columns={'AvgPct':'Avg %','WinRate':'Win%'}),
+                         width='stretch', hide_index=True)
