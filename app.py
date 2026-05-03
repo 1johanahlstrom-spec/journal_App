@@ -42,7 +42,7 @@ html,body,.stApp{background-color:var(--bg)!important;color:var(--text)!importan
 [data-testid="stSidebar"]{display:none!important;}
 [data-testid="collapsedControl"]{display:none!important;}
 #MainMenu,footer,header{visibility:hidden;}
-.block-container{padding:2rem!important;max-width:100%!important;}
+.block-container{padding:2rem!important;max-width:1100px!important;margin:0 auto!important;}
 .metric-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem;text-align:center;}
 .metric-card:hover{border-color:var(--accent);}
 .metric-label{font-family:'Space Mono',monospace;font-size:0.85rem;letter-spacing:0.15em;color:#9999aa;text-transform:uppercase;margin-bottom:0.4rem;}
@@ -355,11 +355,17 @@ if not filtered.empty:
     avg_loss_time = losses_df['Hålltid (min)'].dropna().mean() if losses > 0 else None
 
     st.markdown('<div class="section-header">PERIOD STATISTIK</div>', unsafe_allow_html=True)
-    cols = st.columns(8)
-    for col, (label, val, fmt) in zip(cols, [
-        ("NETTO P/L", total_pnl, "dollar"), ("WIN RATE", win_rate, "pct"), ("TRADES", total, "int"),
-        ("AVG VINST $", avg_win_dollar, "dollar"), ("AVG FÖRLUST $", avg_loss_dollar, "dollar"),
-        ("AVG VINST %", avg_win_pct, "pct"), ("AVG FÖRLUST %", avg_loss_pct, "pct"), ("RISK/REWARD", rr, "x"),
+    row1 = st.columns(4)
+    for col, (label, val, fmt) in zip(row1, [
+        ("NETTO P/L", total_pnl, "dollar"), ("WIN RATE", win_rate, "pct"),
+        ("TRADES", total, "int"), ("RISK/REWARD", rr, "x"),
+    ]):
+        with col: st.markdown(mcard(label, val, fmt), unsafe_allow_html=True)
+
+    row2 = st.columns(4)
+    for col, (label, val, fmt) in zip(row2, [
+        ("SNITTVINST", avg_win_dollar, "dollar"), ("SNITTFÖRLUST", avg_loss_dollar, "dollar"),
+        ("SNITTVINST", avg_win_pct, "pct"), ("SNITTFÖRLUST", avg_loss_pct, "pct"),
     ]):
         with col: st.markdown(mcard(label, val, fmt), unsafe_allow_html=True)
 
