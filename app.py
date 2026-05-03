@@ -186,111 +186,71 @@ def compute_fifo(all_trades):
     for t in all_trades:
         side = SIDE_MAP.get(str(t.get('side','')).strip().upper())
         if not side: continue
-        
         trade_date = (t.get('tradeDate') or '').split('T')[0]
         exec_time  = t.get('execTime') or '00:00:00'
-        
-        # --- RISE DATA CALIBRATION ---
-        raw_qty = float(t.get('executed') or t.get('qty') or 0)
-        raw_price = float(t.get('priceAvg') or t.get('price') or 0)
-        raw_netto = float(t.get('netProceeds') or 0)
-        
-        # Enhetskorrigering: Om priset är orimligt högt (>2000), är det troligen totalvärdet
-        actual_unit_price = raw_price / raw_qty if (raw_price > 2000 and raw_qty > 0) else raw_price
-        
-        # Courtage-detektor: Om netto är pyttelitet jämfört med volymen, är det bara avgiften
-        # Vi räknar ut det sanna kassaflödet (inkl. estimerat courtage om det saknas)
-        est_volume = raw_qty * actual_unit_price
-        if abs(raw_netto) < (est_volume * 0.1) and est_volume > 10:
-            # Här antar vi att raw_netto bara är avgiften. 
-            # Köp: Pengar ut (negativt). Sälj: Pengar in (positivt).
-            actual_cashflow = -est_volume - abs(raw_netto) if side == 'BUY' else est_volume - abs(raw_netto)
-        else:
-            actual_cashflow = raw_netto
-
         rows.append({
-            'Symbol': t.get('symbol'),
-            'Side': side,
-            'Antal': raw_qty,
-            'Enhetspris': actual_unit_price,
-            'Kassaflöde': actual_cashflow, # Detta är din "True North" för P/L
+            'Symbol': t.get('symbol'), 'Side': side,
+            'Antal': float(t.get('qty') or 0), 'Pris': float(t.get('price') or 0),
             'Tidsstämpel': pd.to_datetime(f"{trade_date}T{exec_time}", errors='coerce'),
             'Datum': trade_date,
         })
-    
     df = pd.DataFrame(rows).sort_values('Tidsstämpel').reset_index(drop=True)
     valid_trades = []
 
     for symbol, group in df.groupby('Symbol'):
-        # Köer för att hålla reda på ingångsvärden (FIFO)
-        # Varje element: (antal, kassaflöde_per_aktie, entry_ts, entry_datum)
         long_fifo, short_fifo, position = [], [], 0.0
+        entry_time, entry_date = None, None
 
         for _, row in group.iterrows():
-            qty, side = row['Antal'], row['Side']
-            cash_per_share = row['Kassaflöde'] / qty if qty > 0 else 0
+            qty, price, side = abs(float(row['Antal'])), abs(float(row['Pris'])), row['Side']
             ts, datum = row['Tidsstämpel'], row['Datum']
+            if math.isnan(price) or qty == 0 or price == 0: continue
+
+            if abs(position) < 0.01 and qty > 0:
+                entry_time, entry_date = ts, datum
 
             if side == 'BUY':
-                if position < -0.01: # Vi täcker en kort position
-                    remaining = qty
+                if position < -0.01:
+                    remaining, pnl, cost = qty, 0.0, 0.0
                     while remaining > 0.01 and short_fifo:
-                        o_qty, o_cash_per_share, o_ts, o_datum = short_fifo[0]
-                        m = min(remaining, o_qty)
-                        
-                        # P/L = Pengar in vid sälj + Pengar ut vid köp
-                        trade_pnl = m * (o_cash_per_share + cash_per_share)
-                        trade_cost = m * abs(o_cash_per_share)
-                        
-                        # Sanity filter: Ingen swingtrade bör ge > 500% vinst (datafel)
-                        if abs(trade_pnl / trade_cost) < 5.0:
-                            valid_trades.append({
-                                'Ticker': symbol, 'Vinst ($)': round(trade_pnl, 2),
-                                'Vinst %': round((trade_pnl / trade_cost * 100), 1),
-                                'Riktning': 'SHORT', 'Datum': datum, 'Entry Datum': o_datum,
-                                'Hålltid (min)': round((ts - o_ts).total_seconds()/60)
-                            })
-                        
-                        remaining -= m
-                        if o_qty <= m: short_fifo.pop(0)
-                        else: short_fifo[0] = (o_qty - m, o_cash_per_share, o_ts, o_datum)
-                    
-                    if remaining > 0.01: # Vi vände från kort till lång
-                        long_fifo.append((remaining, cash_per_share, ts, datum))
-                else: # Ökar lång position
-                    long_fifo.append((qty, cash_per_share, ts, datum))
+                        oq, op = short_fifo[0]; m = min(remaining, oq)
+                        pnl += m*(op-price); cost += m*op
+                        remaining -= m; oq -= m
+                        if oq < 0.01: short_fifo.pop(0)
+                        else: short_fifo[0] = (oq, op)
+                    pct = (pnl/cost*100) if cost > 0 else 0
+                    dur = round((ts - entry_time).total_seconds()/60) if entry_time else None
+                    valid_trades.append({'Ticker':symbol, 'Vinst ($)':round(pnl,2), 'Vinst %':round(pct,1),
+                        'Riktning':'SHORT', 'Datum':datum, 'Entry Datum':entry_date or datum,
+                        'Tidsstämpel':ts, 'Hålltid (min)':dur})
+                    if remaining > 0.01: long_fifo.append((remaining, price))
+                    if abs(position+qty) < 0.01: entry_time = entry_date = None
+                else:
+                    if abs(position) < 0.01: entry_time, entry_date = ts, datum
+                    long_fifo.append((qty, price))
                 position += qty
-
-            else: # SELL
-                if position > 0.01: # Vi säljer en lång position
-                    remaining = qty
+            else:
+                if position > 0.01:
+                    remaining, pnl, cost = qty, 0.0, 0.0
                     while remaining > 0.01 and long_fifo:
-                        o_qty, o_cash_per_share, o_ts, o_datum = long_fifo[0]
-                        m = min(remaining, o_qty)
-                        
-                        # P/L = Pengar ut vid köp (neg) + Pengar in vid sälj (pos)
-                        trade_pnl = m * (o_cash_per_share + cash_per_share)
-                        trade_cost = m * abs(o_cash_per_share)
-                        
-                        if abs(trade_pnl / trade_cost) < 5.0:
-                            valid_trades.append({
-                                'Ticker': symbol, 'Vinst ($)': round(trade_pnl, 2),
-                                'Vinst %': round((trade_pnl / trade_cost * 100), 1),
-                                'Riktning': 'LONG', 'Datum': datum, 'Entry Datum': o_datum,
-                                'Hålltid (min)': round((ts - o_ts).total_seconds()/60)
-                            })
-                            
-                        remaining -= m
-                        if o_qty <= m: long_fifo.pop(0)
-                        else: long_fifo[0] = (o_qty - m, o_cash_per_share, o_ts, o_datum)
-                    
-                    if remaining > 0.01: # Vi vände från lång till kort
-                        short_fifo.append((remaining, cash_per_share, ts, datum))
-                else: # Ökar kort position
-                    short_fifo.append((qty, cash_per_share, ts, datum))
+                        oq, op = long_fifo[0]; m = min(remaining, oq)
+                        pnl += m*(price-op); cost += m*op
+                        remaining -= m; oq -= m
+                        if oq < 0.01: long_fifo.pop(0)
+                        else: long_fifo[0] = (oq, op)
+                    pct = (pnl/cost*100) if cost > 0 else 0
+                    dur = round((ts - entry_time).total_seconds()/60) if entry_time else None
+                    valid_trades.append({'Ticker':symbol, 'Vinst ($)':round(pnl,2), 'Vinst %':round(pct,1),
+                        'Riktning':'LONG', 'Datum':datum, 'Entry Datum':entry_date or datum,
+                        'Tidsstämpel':ts, 'Hålltid (min)':dur})
+                    if remaining > 0.01: short_fifo.append((remaining, price))
+                    if abs(position-qty) < 0.01: entry_time = entry_date = None
+                else:
+                    if abs(position) < 0.01: entry_time, entry_date = ts, datum
+                    short_fifo.append((qty, price))
                 position -= qty
-
     return pd.DataFrame(valid_trades)
+
 
 # --- HELPERS ---
 def fmt_duration(minutes):
@@ -475,32 +435,156 @@ if not filtered.empty:
 
 # --- TABS ---
 st.markdown('<div class="section-header">ANALYS</div>', unsafe_allow_html=True)
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["P/L KURVA", "PER TICKER", "MÅNADER", "ALLA TRADES", "RAW DATA"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["P/L KURVA", "INSIKTER", "PER TICKER", "MÅNADER", "ALLA TRADES", "RAW DATA"])
 
 
 with tab1:
     if not filtered.empty:
         daily = filtered.groupby('Datum')['Vinst ($)'].sum().reset_index().sort_values('Datum')
         daily['Kumulativ'] = daily['Vinst ($)'].cumsum()
-        col_a, col_b = st.columns([2, 1])
-        with col_a:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=daily['Datum'], y=daily['Kumulativ'],
-                fill='tozeroy', fillcolor='rgba(0,255,136,0.05)',
-                line=dict(color='#00ff88', width=2), hovertemplate='%{x}<br>$%{y:,.0f}<extra></extra>'))
-            fig.add_hline(y=0, line_dash='dot', line_color='#333344')
-            fig.update_layout(**PLOTLY_LAYOUT, height=300, title='Kumulativ P/L')
-            st.plotly_chart(fig, width='stretch')
-        with col_b:
-            colors = ['#00ff88' if v > 0 else '#ff3366' for v in daily['Vinst ($)']]
-            fig2 = go.Figure(go.Bar(x=daily['Datum'], y=daily['Vinst ($)'],
-                marker_color=colors, hovertemplate='%{x}<br>$%{y:,.0f}<extra></extra>'))
-            fig2.update_layout(**PLOTLY_LAYOUT, height=300, title='Daglig P/L')
-            st.plotly_chart(fig2, width='stretch')
+        daily['Peak'] = daily['Kumulativ'].cummax()
+        daily['Drawdown'] = daily['Kumulativ'] - daily['Peak']
+        daily['Drawdown %'] = (daily['Drawdown'] / daily['Peak'].replace(0, 1) * 100)
+
+        # Equity curve + drawdown
+        from plotly.subplots import make_subplots
+        fig_eq = make_subplots(rows=2, cols=1, shared_xaxes=True,
+            vertical_spacing=0.05, row_heights=[0.7, 0.3],
+            subplot_titles=['Equity Curve', 'Drawdown'])
+
+        fig_eq.add_trace(go.Scatter(x=daily['Datum'], y=daily['Kumulativ'],
+            fill='tozeroy', fillcolor='rgba(0,255,136,0.05)',
+            line=dict(color='#00ff88', width=2), name='P/L',
+            hovertemplate='%{x}<br>$%{y:,.0f}<extra></extra>'), row=1, col=1)
+        fig_eq.add_trace(go.Scatter(x=daily['Datum'], y=daily['Peak'],
+            line=dict(color='#333366', width=1, dash='dot'), name='Peak',
+            hovertemplate='Peak: $%{y:,.0f}<extra></extra>'), row=1, col=1)
+        fig_eq.add_hline(y=0, line_dash='dot', line_color='#333344', row=1, col=1)
+
+        fig_eq.add_trace(go.Scatter(x=daily['Datum'], y=daily['Drawdown'],
+            fill='tozeroy', fillcolor='rgba(255,51,102,0.15)',
+            line=dict(color='#ff3366', width=1.5), name='Drawdown',
+            hovertemplate='%{x}<br>$%{y:,.0f}<extra></extra>'), row=2, col=1)
+
+        fig_eq.update_layout(**PLOTLY_LAYOUT, height=450, showlegend=False)
+        fig_eq.update_annotations(font=dict(color='#9999aa', family='Space Mono', size=12))
+        st.plotly_chart(fig_eq, width='stretch')
+
+        # Drawdown stats
+        max_dd = daily['Drawdown'].min()
+        max_dd_pct = daily['Drawdown %'].min()
+        max_dd_date = daily.loc[daily['Drawdown'].idxmin(), 'Datum'] if max_dd < 0 else '–'
+
+        d1, d2, d3 = st.columns(3)
+        with d1: st.markdown(mcard("MAX DRAWDOWN", max_dd, "dollar"), unsafe_allow_html=True)
+        with d2: st.markdown(mcard("MAX DRAWDOWN", max_dd_pct if max_dd < 0 else 0, "pct"), unsafe_allow_html=True)
+        with d3: st.markdown(mcard("DATUM", 0, "raw", sub=str(max_dd_date)), unsafe_allow_html=True)
+
+        # Daily P/L bars
+        st.markdown('<div class="section-header">DAGLIG P/L</div>', unsafe_allow_html=True)
+        colors = ['#00ff88' if v > 0 else '#ff3366' for v in daily['Vinst ($)']]
+        fig2 = go.Figure(go.Bar(x=daily['Datum'], y=daily['Vinst ($)'],
+            marker_color=colors, hovertemplate='%{x}<br>$%{y:,.0f}<extra></extra>'))
+        fig2.update_layout(**PLOTLY_LAYOUT, height=250)
+        st.plotly_chart(fig2, width='stretch')
     else: st.info("Inga trades i valt intervall.")
 
 
 with tab2:
+    if not filtered.empty:
+        daily = filtered.groupby('Datum')['Vinst ($)'].sum().reset_index().sort_values('Datum')
+        daily['Datum_dt'] = pd.to_datetime(daily['Datum'])
+        daily['Veckodag'] = daily['Datum_dt'].dt.day_name()
+
+        # --- BÄSTA / SÄMSTA DAGAR ---
+        st.markdown('<div class="section-header">BÄSTA & SÄMSTA DAGAR</div>', unsafe_allow_html=True)
+        top5 = daily.nlargest(5, 'Vinst ($)')
+        bottom5 = daily.nsmallest(5, 'Vinst ($)')
+
+        col_best, col_worst = st.columns(2)
+        with col_best:
+            st.markdown('<div style="font-family:Space Mono,monospace;font-size:0.85rem;color:#00ff88;margin-bottom:0.5rem;">TOP 5 DAGAR</div>', unsafe_allow_html=True)
+            for _, r in top5.iterrows():
+                st.markdown(f'<div style="font-family:Space Mono,monospace;font-size:0.85rem;padding:6px 0;border-bottom:1px solid #1e1e2e;color:#e8e8f0;">{r["Datum"]}  <span style="color:#00ff88;font-weight:700;">${r["Vinst ($)"]:+,.0f}</span></div>', unsafe_allow_html=True)
+        with col_worst:
+            st.markdown('<div style="font-family:Space Mono,monospace;font-size:0.85rem;color:#ff3366;margin-bottom:0.5rem;">SÄMSTA 5 DAGAR</div>', unsafe_allow_html=True)
+            for _, r in bottom5.iterrows():
+                st.markdown(f'<div style="font-family:Space Mono,monospace;font-size:0.85rem;padding:6px 0;border-bottom:1px solid #1e1e2e;color:#e8e8f0;">{r["Datum"]}  <span style="color:#ff3366;font-weight:700;">${r["Vinst ($)"]:+,.0f}</span></div>', unsafe_allow_html=True)
+
+        # --- STREAKS ---
+        st.markdown('<div class="section-header">STREAKS</div>', unsafe_allow_html=True)
+        streak_type, current_streak, max_win_streak, max_loss_streak = None, 0, 0, 0
+        curr_win, curr_loss = 0, 0
+        for _, r in daily.iterrows():
+            if r['Vinst ($)'] > 0:
+                curr_win += 1
+                curr_loss = 0
+                max_win_streak = max(max_win_streak, curr_win)
+            elif r['Vinst ($)'] < 0:
+                curr_loss += 1
+                curr_win = 0
+                max_loss_streak = max(max_loss_streak, curr_loss)
+            else:
+                curr_win = curr_loss = 0
+
+        # Current streak
+        curr_streak_val, curr_streak_type = 0, "–"
+        for _, r in daily.iloc[::-1].iterrows():
+            if curr_streak_val == 0:
+                curr_streak_type = "VINST" if r['Vinst ($)'] > 0 else "FÖRLUST"
+            if (curr_streak_type == "VINST" and r['Vinst ($)'] > 0) or \
+               (curr_streak_type == "FÖRLUST" and r['Vinst ($)'] < 0):
+                curr_streak_val += 1
+            else:
+                break
+
+        s1, s2, s3 = st.columns(3)
+        with s1: st.markdown(mcard("LÄNGSTA VINSTSVIT", max_win_streak, "int", sub="dagar i rad"), unsafe_allow_html=True)
+        with s2: st.markdown(mcard("LÄNGSTA FÖRLUSTSVIT", max_loss_streak, "int", sub="dagar i rad"), unsafe_allow_html=True)
+        with s3:
+            streak_color = "#00ff88" if curr_streak_type == "VINST" else "#ff3366"
+            st.markdown(
+                f'<div class="metric-card"><div class="metric-label">NUVARANDE STREAK</div>'
+                f'<div class="metric-value" style="color:{streak_color};">{curr_streak_val}</div>'
+                f'<div class="metric-sub">{curr_streak_type}-dagar i rad</div></div>',
+                unsafe_allow_html=True)
+
+        # --- VECKODAG ---
+        st.markdown('<div class="section-header">AVKASTNING PER VECKODAG</div>', unsafe_allow_html=True)
+
+        weekday_order = ['Monday','Tuesday','Wednesday','Thursday','Friday']
+        weekday_sv = {'Monday':'Måndag','Tuesday':'Tisdag','Wednesday':'Onsdag','Thursday':'Torsdag','Friday':'Fredag'}
+        by_weekday = daily.groupby('Veckodag').agg(
+            Dagar=('Vinst ($)','count'),
+            Total=('Vinst ($)','sum'),
+            Snitt=('Vinst ($)','mean'),
+            WinRate=('Vinst ($)', lambda x: (x>0).sum()/len(x)*100),
+        ).reindex(weekday_order).dropna().reset_index()
+        by_weekday['Snitt'] = by_weekday['Snitt'].round(0)
+        by_weekday['WinRate'] = by_weekday['WinRate'].round(1)
+        by_weekday['Dag'] = by_weekday['Veckodag'].map(weekday_sv)
+
+        colors_wd = ['#00ff88' if v > 0 else '#ff3366' for v in by_weekday['Snitt']]
+        fig_wd = go.Figure(go.Bar(x=by_weekday['Dag'], y=by_weekday['Snitt'],
+            marker_color=colors_wd,
+            text=[f"${v:+,.0f}" for v in by_weekday['Snitt']], textposition='outside',
+            textfont=dict(color=colors_wd),
+            hovertemplate='%{x}<br>Snitt: $%{y:,.0f}<extra></extra>'))
+        fig_wd.update_layout(**PLOTLY_LAYOUT, height=280, title='Snittavkastning per veckodag',
+                             xaxis_type='category')
+        st.plotly_chart(fig_wd, width='stretch')
+
+        cols_wd = st.columns(len(by_weekday))
+        for col, (_, r) in zip(cols_wd, by_weekday.iterrows()):
+            with col:
+                st.markdown(mcard(r['Dag'].upper(), r['Snitt'], "dollar",
+                    sub=f"{int(r['Dagar'])}d | {r['WinRate']:.0f}% win"),
+                    unsafe_allow_html=True)
+
+    else: st.info("Inga trades i valt intervall.")
+
+
+with tab3:
     if not filtered.empty:
         by_ticker = filtered.groupby('Ticker').agg(
             PnL=('Vinst ($)','sum'), Trades=('Vinst ($)','count'),
@@ -526,7 +610,7 @@ with tab2:
     else: st.info("Inga trades i valt intervall.")
 
 
-with tab3:
+with tab4:
     if not filtered.empty:
         monthly = filtered.copy()
         monthly['Månad'] = monthly['Datum_dt'].dt.to_period('M').astype(str)
@@ -555,7 +639,7 @@ with tab3:
     else: st.info("Inga trades i valt intervall.")
 
 
-with tab4:
+with tab5:
     if not filtered.empty:
         # --- Trade list ---
         display = filtered[['Datum','Entry Datum','Ticker','Riktning','Vinst ($)','Vinst %','Hålltid (min)']].copy()
@@ -699,7 +783,7 @@ with tab4:
         st.info("Inga trades i valt intervall.")
 
 
-with tab5:
+with tab6:
     raw_df = pd.DataFrame([{
         'Datum': (t.get('tradeDate') or '').split('T')[0], 'Tid': t.get('execTime',''),
         'Symbol': t.get('symbol'), 'Side': t.get('side'),
