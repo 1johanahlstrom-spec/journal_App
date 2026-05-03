@@ -145,6 +145,36 @@ def fetch_chart_data(ticker, start_date, end_date):
     except Exception as e:
         return str(e)
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_news(tickers):
+    try:
+        import yfinance as yf
+        all_news = []
+        for ticker in tickers:
+            try:
+                t = yf.Ticker(ticker)
+                news = t.news
+                if news:
+                    for item in news[:3]:
+                        content = item.get('content', {})
+                        title = content.get('title', '')
+                        provider = content.get('provider', {}).get('displayName', '')
+                        pub_date = content.get('pubDate', '')
+                        url = content.get('canonicalUrl', {}).get('url', '')
+                        if not url:
+                            url = content.get('clickThroughUrl', {}).get('url', '')
+                        if title:
+                            all_news.append({
+                                'ticker': ticker,
+                                'title': title,
+                                'provider': provider,
+                                'date': pub_date[:10] if pub_date else '',
+                                'url': url,
+                            })
+            except: pass
+        return all_news
+    except: return []
+
 
 # --- FIFO ENGINE ---
 def compute_fifo(all_trades):
@@ -337,6 +367,28 @@ st.markdown('<div class="section-header">ÖPPNA POSITIONER</div>', unsafe_allow_
 p1, p2 = st.columns(2)
 with p1: st.markdown(mcard("LONG", len(longs), "int", sub=" | ".join(p['symbol'] for p in longs) or "–"), unsafe_allow_html=True)
 with p2: st.markdown(mcard("SHORT", len(shorts), "int", sub=" | ".join(p['symbol'] for p in shorts) or "–"), unsafe_allow_html=True)
+
+# --- NEWS ---
+if open_pos:
+    with st.expander("📰 NYHETER OM ÖPPNA POSITIONER", expanded=False):
+        open_tickers = [p['symbol'] for p in open_pos]
+        with st.spinner("Hämtar nyheter..."):
+            news_items = fetch_news(open_tickers)
+        if news_items:
+            for ticker in open_tickers:
+                ticker_news = [n for n in news_items if n['ticker'] == ticker]
+                if ticker_news:
+                    st.markdown(f'<div class="section-header">{ticker}</div>', unsafe_allow_html=True)
+                    for n in ticker_news:
+                        link = f' <a href="{n["url"]}" target="_blank" style="color:#00ff88;text-decoration:none;">→ läs</a>' if n['url'] else ''
+                        st.markdown(
+                            f'<div style="padding:8px 0;border-bottom:1px solid #1e1e2e;">'
+                            f'<span style="font-family:Space Mono,monospace;font-size:0.85rem;color:#e8e8f0;">{n["title"]}</span>'
+                            f'<br><span style="font-family:Space Mono,monospace;font-size:0.7rem;color:#555570;">{n["date"]}  •  {n["provider"]}</span>'
+                            f'{link}</div>',
+                            unsafe_allow_html=True)
+        else:
+            st.info("Inga nyheter hittades.")
 
 
 # --- PERIOD STATS ---
