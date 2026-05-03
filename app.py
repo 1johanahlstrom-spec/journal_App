@@ -373,7 +373,7 @@ if not filtered.empty:
 
 # --- TABS ---
 st.markdown('<div class="section-header">ANALYS</div>', unsafe_allow_html=True)
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["P/L KURVA", "PER TICKER", "MÅNADER", "TRADE DETALJ", "ALLA TRADES", "RAW DATA"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["P/L KURVA", "PER TICKER", "MÅNADER", "ALLA TRADES", "RAW DATA"])
 
 
 with tab1:
@@ -455,18 +455,35 @@ with tab3:
 
 with tab4:
     if not filtered.empty:
-        st.markdown('<div class="section-header">VÄLJ TRADE</div>', unsafe_allow_html=True)
+        # --- Trade list ---
+        display = filtered[['Datum','Entry Datum','Ticker','Riktning','Vinst ($)','Vinst %','Hålltid (min)']].copy()
+        display['_key'] = filtered['_key']
+        display['Strategi'] = display['_key'].map(lambda k: st.session_state.annotations.get(k, {}).get('strategy', '–'))
+        display['Betyg']    = display['_key'].map(lambda k: st.session_state.annotations.get(k, {}).get('grade', '–'))
+        display['Hålltid']  = display['Hålltid (min)'].apply(fmt_duration)
+        display_show = display.drop(columns=['Hålltid (min)', '_key']).sort_values('Datum', ascending=False)
+        def color_pnl(val):
+            if isinstance(val, (int, float)):
+                return f'color: {"#00ff88" if val > 0 else "#ff3366" if val < 0 else "#888899"};'
+            return ''
+        styled = display_show.style.map(color_pnl, subset=['Vinst ($)', 'Vinst %'])\
+                              .format({'Vinst ($)': '{:+,.2f}', 'Vinst %': '{:+.1f}%'})
+        st.dataframe(styled, width='stretch', hide_index=True, height=400)
+
+        # --- Trade detail selector ---
+        st.markdown('<div class="section-header">TRADE DETALJ — VÄLJ TRADE</div>', unsafe_allow_html=True)
 
         trade_options = []
-        for _, r in filtered.sort_values('Datum', ascending=False).iterrows():
+        sorted_trades = filtered.sort_values('Datum', ascending=False)
+        for _, r in sorted_trades.iterrows():
             pnl_sign = "✅" if r['Vinst ($)'] > 0 else "❌"
-            strat_tag = f" [{r['Strategi']}]" if r['Strategi'] != '–' else ""
-            grade_tag = f" ({r['Betyg'][0]})" if r['Betyg'] != '–' else ""
+            strat_tag = f" [{st.session_state.annotations.get(r['_key'],{}).get('strategy','–')}]" if st.session_state.annotations.get(r['_key'],{}).get('strategy','–') != '–' else ""
+            grade_tag = f" ({st.session_state.annotations.get(r['_key'],{}).get('grade','–')[0]})" if st.session_state.annotations.get(r['_key'],{}).get('grade','–') != '–' else ""
             trade_options.append(f"{pnl_sign} {r['Ticker']}  {r['Entry Datum']} → {r['Datum']}  ${r['Vinst ($)']:+,.0f}  {r['Riktning']}{strat_tag}{grade_tag}")
 
         selected_idx = st.selectbox("Trade", range(len(trade_options)),
             format_func=lambda i: trade_options[i], label_visibility="collapsed")
-        trade = filtered.sort_values('Datum', ascending=False).iloc[selected_idx]
+        trade = sorted_trades.iloc[selected_idx]
         tk = trade_key(trade)
 
         # Strategy + Grade + Save
@@ -495,7 +512,7 @@ with tab4:
                     st.warning("Sparad i sessionen. Exportera JSON för att behålla.")
                 st.rerun()
 
-        # Trade info
+        # Trade info cards
         col_i1, col_i2, col_i3, col_i4 = st.columns(4)
         with col_i1: st.markdown(mcard("P/L", trade['Vinst ($)'], "dollar"), unsafe_allow_html=True)
         with col_i2: st.markdown(mcard("VINST %", trade['Vinst %'], "pct"), unsafe_allow_html=True)
@@ -511,32 +528,23 @@ with tab4:
             from plotly.subplots import make_subplots
             fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True,
                 vertical_spacing=0.03, row_heights=[0.75, 0.25])
-
             fig_chart.add_trace(go.Candlestick(
                 x=chart_df['Date'], open=chart_df['Open'], high=chart_df['High'],
                 low=chart_df['Low'], close=chart_df['Close'],
                 increasing_line_color='#00ff88', decreasing_line_color='#ff3366',
                 increasing_fillcolor='#00ff88', decreasing_fillcolor='#ff3366',
                 name='Pris'), row=1, col=1)
-
-            # Volume bars colored by price direction (if available)
             if 'Volume' in chart_df.columns and chart_df['Volume'].sum() > 0:
                 vol_colors = ['#00ff88' if c >= o else '#ff3366'
                               for c, o in zip(chart_df['Close'], chart_df['Open'])]
-                fig_chart.add_trace(go.Bar(
-                    x=chart_df['Date'], y=chart_df['Volume'],
-                    marker_color=vol_colors, opacity=0.4,
-                    name='Volym', showlegend=False), row=2, col=1)
-
-            # Entry marker
+                fig_chart.add_trace(go.Bar(x=chart_df['Date'], y=chart_df['Volume'],
+                    marker_color=vol_colors, opacity=0.4, showlegend=False), row=2, col=1)
             entry_dt = pd.to_datetime(trade['Entry Datum'])
             exit_dt  = pd.to_datetime(trade['Datum'])
             entry_color = '#00ff88' if trade['Riktning'] == 'LONG' else '#ff3366'
             exit_color  = '#ff3366' if trade['Riktning'] == 'LONG' else '#00ff88'
-
             entry_row = chart_df[chart_df['Date'] >= entry_dt].head(1)
             exit_row  = chart_df[chart_df['Date'] >= exit_dt].head(1)
-
             if not entry_row.empty:
                 fig_chart.add_trace(go.Scatter(
                     x=[entry_row['Date'].iloc[0]], y=[float(entry_row['Low'].iloc[0]) * 0.98],
@@ -549,7 +557,6 @@ with tab4:
                     mode='markers+text', marker=dict(symbol='triangle-down', size=16, color=exit_color),
                     text=['EXIT'], textposition='top center', textfont=dict(color=exit_color, size=10),
                     showlegend=False), row=1, col=1)
-
             fig_chart.update_layout(**PLOTLY_LAYOUT, height=500,
                 title=f"{trade['Ticker']} — {trade['Entry Datum']} → {trade['Datum']}",
                 xaxis_rangeslider_visible=False,
@@ -561,7 +568,7 @@ with tab4:
             if isinstance(chart_df, str):
                 st.warning(f"Kunde inte hämta kursdata för {trade['Ticker']}: {chart_df}")
             else:
-                st.warning(f"Ingen kursdata tillgänglig för {trade['Ticker']} (tickern kanske inte finns på Yahoo Finance)")
+                st.warning(f"Ingen kursdata tillgänglig för {trade['Ticker']}")
 
         # Notes
         curr_notes = st.session_state.annotations.get(tk, {}).get('notes', '')
@@ -578,24 +585,6 @@ with tab4:
 
 
 with tab5:
-    if not filtered.empty:
-        display = filtered[['Datum','Entry Datum','Ticker','Riktning','Vinst ($)','Vinst %','Hålltid (min)']].copy()
-        display['_key'] = filtered['_key']
-        display['Strategi'] = display['_key'].map(lambda k: st.session_state.annotations.get(k, {}).get('strategy', '–'))
-        display['Betyg']    = display['_key'].map(lambda k: st.session_state.annotations.get(k, {}).get('grade', '–'))
-        display['Hålltid']  = display['Hålltid (min)'].apply(fmt_duration)
-        display = display.drop(columns=['Hålltid (min)', '_key']).sort_values('Datum', ascending=False)
-        def color_pnl(val):
-            if isinstance(val, (int, float)):
-                return f'color: {"#00ff88" if val > 0 else "#ff3366" if val < 0 else "#888899"};'
-            return ''
-        styled = display.style.map(color_pnl, subset=['Vinst ($)', 'Vinst %'])\
-                              .format({'Vinst ($)': '{:+,.2f}', 'Vinst %': '{:+.1f}%'})
-        st.dataframe(styled, width='stretch', hide_index=True, height=500)
-    else: st.info("Inga trades i valt intervall.")
-
-
-with tab6:
     raw_df = pd.DataFrame([{
         'Datum': (t.get('tradeDate') or '').split('T')[0], 'Tid': t.get('execTime',''),
         'Symbol': t.get('symbol'), 'Side': t.get('side'),
