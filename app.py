@@ -28,7 +28,7 @@ SIDE_MAP = {
     'SELL':'SELL','S':'SELL','SLD':'SELL','SHORT':'SELL','SS':'SELL','SELLSHORT':'SELL',
 }
 STRATEGIES = ["–", "Breakout / Flag", "Episodic Pivot", "Parabolic Short"]
-GRADES     = ["–", "A — Jättebra", "B — Bra", "C — Dålig"]
+GRADES     = ["–", "A", "B", "C", "F"]
 ANNOTATIONS_FILE = os.path.join(base_dir, "annotations.json")
 
 # --- PAGE ---
@@ -549,7 +549,7 @@ with tab4:
             for _, r in selectable.iterrows():
                 pnl_sign = "✅" if r['Vinst ($)'] > 0 else "❌"
                 strat_tag = f" [{st.session_state.annotations.get(r['_key'],{}).get('strategy','–')}]" if st.session_state.annotations.get(r['_key'],{}).get('strategy','–') != '–' else ""
-                grade_tag = f" ({st.session_state.annotations.get(r['_key'],{}).get('grade','–')[0]})" if st.session_state.annotations.get(r['_key'],{}).get('grade','–') != '–' else ""
+                grade_tag = f" ({st.session_state.annotations.get(r['_key'],{}).get('grade','–')})" if st.session_state.annotations.get(r['_key'],{}).get('grade','–') != '–' else ""
                 trade_options.append(f"{pnl_sign} {r['Ticker']}  {r['Entry Datum']} → {r['Datum']}  ${r['Vinst ($)']:+,.0f}  {r['Riktning']}{strat_tag}{grade_tag}")
 
             selected_idx = st.selectbox("Trade", range(len(trade_options)),
