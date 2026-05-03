@@ -356,7 +356,95 @@ with st.spinner("Hämtar data..."):
 if not all_trades:
     st.error("Inga trades. Kontrollera API-nycklar."); st.stop()
 
+# --- DATA VALIDATION ---
+def validate_trades(trades):
+    """Validerar och rensar API-data. Returnerar (clean_trades, warnings)."""
+    clean = []
+    warnings = []
+    seen_ids = set()
+
+    for t in trades:
+        tid = t.get('tradeId', '')
+        symbol = t.get('symbol', '?')
+        date = (t.get('tradeDate') or '').split('T')[0]
+        price = float(t.get('price') or 0)
+        qty = float(t.get('qty') or 0)
+        gross = float(t.get('grossProceeds') or 0)
+        side = str(t.get('side', '')).strip()
+
+        # Duplikat-check
+        if tid in seen_ids:
+            warnings.append(f"⚠️ Duplikat: {symbol} {date} (ID: {tid})")
+            continue
+        seen_ids.add(tid)
+
+        # Cancelled trades
+        if t.get('canceled', False):
+            warnings.append(f"⚠️ Cancelerad: {symbol} {date}")
+            continue
+
+        # Saknar nödvändig data
+        if not symbol or not side:
+            warnings.append(f"⚠️ Saknar symbol/side: ID {tid}")
+            continue
+
+        # Pris/antal = 0
+        if price <= 0 or qty <= 0:
+            warnings.append(f"⚠️ Pris/antal = 0: {symbol} {date} (pris={price}, qty={qty})")
+            continue
+
+        # Korsvalidering: price * qty vs grossProceeds (tillåt 5% avvikelse)
+        expected_gross = price * qty
+        if gross != 0 and expected_gross > 0:
+            deviation = abs(abs(gross) - expected_gross) / expected_gross
+            if deviation > 0.05:
+                warnings.append(
+                    f"⚠️ Avvikelse {symbol} {date}: "
+                    f"pris×antal=${expected_gross:.2f} vs gross=${gross:.2f} ({deviation*100:.0f}%)")
+
+        # Orimligt högt pris (> $50,000 per aktie)
+        if price > 50000:
+            warnings.append(f"⚠️ Misstänkt högt pris: {symbol} {date} @ ${price:,.2f}")
+
+        # Okänd side
+        mapped = SIDE_MAP.get(side.upper())
+        if not mapped:
+            warnings.append(f"⚠️ Okänd side '{side}': {symbol} {date}")
+
+        clean.append(t)
+
+    return clean, warnings
+
+all_trades, data_warnings = validate_trades(all_trades)
+
+# Show validation status
+if data_warnings:
+    with st.expander(f"⚠️ DATAVALIDERING — {len(data_warnings)} varningar", expanded=False):
+        for w in data_warnings[:50]:
+            st.markdown(f'<div style="font-family:Space Mono,monospace;font-size:0.75rem;color:#ff6633;padding:3px 0;">{w}</div>', unsafe_allow_html=True)
+        if len(data_warnings) > 50:
+            st.caption(f"... och {len(data_warnings)-50} till")
+
 res_df = compute_fifo(all_trades)
+
+# Validate FIFO output
+if not res_df.empty:
+    fifo_warnings = []
+    # Flag trades with unreasonable P/L (> $10,000 on a single close)
+    extreme = res_df[res_df['Vinst ($)'].abs() > 10000]
+    for _, r in extreme.iterrows():
+        fifo_warnings.append(f"🔴 Extremt P/L: {r['Ticker']} {r['Datum']} ${r['Vinst ($)']:+,.0f} ({r['Vinst %']:+.1f}%)")
+    # Flag unreasonable % (> 500%)
+    extreme_pct = res_df[res_df['Vinst %'].abs() > 500]
+    for _, r in extreme_pct.iterrows():
+        if r['Ticker'] not in extreme['Ticker'].values:
+            fifo_warnings.append(f"🔴 Extrem %: {r['Ticker']} {r['Datum']} {r['Vinst %']:+.1f}%")
+
+    if fifo_warnings:
+        with st.expander(f"🔴 FIFO-VARNINGAR — {len(fifo_warnings)} misstänkta trades", expanded=False):
+            st.markdown('<div style="font-family:Space Mono,monospace;font-size:0.75rem;color:#9999aa;margin-bottom:8px;">Dessa trades har ovanligt stora värden — kontrollera rådata.</div>', unsafe_allow_html=True)
+            for w in fifo_warnings:
+                st.markdown(f'<div style="font-family:Space Mono,monospace;font-size:0.75rem;color:#ff3366;padding:3px 0;">{w}</div>', unsafe_allow_html=True)
 
 # Apply filters
 if not res_df.empty:
