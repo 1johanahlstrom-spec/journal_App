@@ -473,113 +473,126 @@ with tab4:
         # --- Trade detail selector ---
         st.markdown('<div class="section-header">TRADE DETALJ — VÄLJ TRADE</div>', unsafe_allow_html=True)
 
-        trade_options = []
+        show_graded = st.checkbox("Visa redan betygsatta", value=False)
+
         sorted_trades = filtered.sort_values('Datum', ascending=False)
-        for _, r in sorted_trades.iterrows():
-            pnl_sign = "✅" if r['Vinst ($)'] > 0 else "❌"
-            strat_tag = f" [{st.session_state.annotations.get(r['_key'],{}).get('strategy','–')}]" if st.session_state.annotations.get(r['_key'],{}).get('strategy','–') != '–' else ""
-            grade_tag = f" ({st.session_state.annotations.get(r['_key'],{}).get('grade','–')[0]})" if st.session_state.annotations.get(r['_key'],{}).get('grade','–') != '–' else ""
-            trade_options.append(f"{pnl_sign} {r['Ticker']}  {r['Entry Datum']} → {r['Datum']}  ${r['Vinst ($)']:+,.0f}  {r['Riktning']}{strat_tag}{grade_tag}")
-
-        selected_idx = st.selectbox("Trade", range(len(trade_options)),
-            format_func=lambda i: trade_options[i], label_visibility="collapsed")
-        trade = sorted_trades.iloc[selected_idx]
-        tk = trade_key(trade)
-
-        # Strategy + Grade + Save
-        col_s, col_g, col_save = st.columns([2, 2, 1])
-        with col_s:
-            curr_strat = st.session_state.annotations.get(tk, {}).get('strategy', '–')
-            new_strat = st.selectbox("Strategi", STRATEGIES,
-                index=STRATEGIES.index(curr_strat) if curr_strat in STRATEGIES else 0,
-                key=f"strat_{tk}")
-        with col_g:
-            curr_grade = st.session_state.annotations.get(tk, {}).get('grade', '–')
-            new_grade = st.selectbox("Betyg", GRADES,
-                index=GRADES.index(curr_grade) if curr_grade in GRADES else 0,
-                key=f"grade_{tk}")
-        with col_save:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("💾 SPARA", key=f"save_{tk}"):
-                if tk not in st.session_state.annotations:
-                    st.session_state.annotations[tk] = {}
-                st.session_state.annotations[tk]['strategy'] = new_strat
-                st.session_state.annotations[tk]['grade'] = new_grade
-                saved = save_annotations()
-                if saved:
-                    st.success(f"Sparad: {trade['Ticker']} — {new_strat} / {new_grade}")
-                else:
-                    st.warning("Sparad i sessionen. Exportera JSON för att behålla.")
-                st.rerun()
-
-        # Trade info cards
-        col_i1, col_i2, col_i3, col_i4 = st.columns(4)
-        with col_i1: st.markdown(mcard("P/L", trade['Vinst ($)'], "dollar"), unsafe_allow_html=True)
-        with col_i2: st.markdown(mcard("VINST %", trade['Vinst %'], "pct"), unsafe_allow_html=True)
-        with col_i3: st.markdown(mcard("RIKTNING", 0, "raw", sub=trade['Riktning']), unsafe_allow_html=True)
-        with col_i4: st.markdown(mcard("HÅLLTID", trade.get('Hålltid (min)') or 0, "time"), unsafe_allow_html=True)
-
-        # Chart
-        st.markdown('<div class="section-header">KURSGRAF</div>', unsafe_allow_html=True)
-        with st.spinner(f"Hämtar kursdata för {trade['Ticker']}..."):
-            chart_df = fetch_chart_data(trade['Ticker'], trade['Entry Datum'], trade['Datum'])
-
-        if chart_df is not None and not isinstance(chart_df, str) and not chart_df.empty:
-            from plotly.subplots import make_subplots
-            fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                vertical_spacing=0.03, row_heights=[0.75, 0.25])
-            fig_chart.add_trace(go.Candlestick(
-                x=chart_df['Date'], open=chart_df['Open'], high=chart_df['High'],
-                low=chart_df['Low'], close=chart_df['Close'],
-                increasing_line_color='#00ff88', decreasing_line_color='#ff3366',
-                increasing_fillcolor='#00ff88', decreasing_fillcolor='#ff3366',
-                name='Pris'), row=1, col=1)
-            if 'Volume' in chart_df.columns and chart_df['Volume'].sum() > 0:
-                vol_colors = ['#00ff88' if c >= o else '#ff3366'
-                              for c, o in zip(chart_df['Close'], chart_df['Open'])]
-                fig_chart.add_trace(go.Bar(x=chart_df['Date'], y=chart_df['Volume'],
-                    marker_color=vol_colors, opacity=0.4, showlegend=False), row=2, col=1)
-            entry_dt = pd.to_datetime(trade['Entry Datum'])
-            exit_dt  = pd.to_datetime(trade['Datum'])
-            entry_color = '#00ff88' if trade['Riktning'] == 'LONG' else '#ff3366'
-            exit_color  = '#ff3366' if trade['Riktning'] == 'LONG' else '#00ff88'
-            entry_row = chart_df[chart_df['Date'] >= entry_dt].head(1)
-            exit_row  = chart_df[chart_df['Date'] >= exit_dt].head(1)
-            if not entry_row.empty:
-                fig_chart.add_trace(go.Scatter(
-                    x=[entry_row['Date'].iloc[0]], y=[float(entry_row['Low'].iloc[0]) * 0.98],
-                    mode='markers+text', marker=dict(symbol='triangle-up', size=16, color=entry_color),
-                    text=['ENTRY'], textposition='bottom center', textfont=dict(color=entry_color, size=10),
-                    showlegend=False), row=1, col=1)
-            if not exit_row.empty:
-                fig_chart.add_trace(go.Scatter(
-                    x=[exit_row['Date'].iloc[0]], y=[float(exit_row['High'].iloc[0]) * 1.02],
-                    mode='markers+text', marker=dict(symbol='triangle-down', size=16, color=exit_color),
-                    text=['EXIT'], textposition='top center', textfont=dict(color=exit_color, size=10),
-                    showlegend=False), row=1, col=1)
-            fig_chart.update_layout(**PLOTLY_LAYOUT, height=500,
-                title=f"{trade['Ticker']} — {trade['Entry Datum']} → {trade['Datum']}",
-                xaxis_rangeslider_visible=False,
-                xaxis_rangebreaks=[dict(bounds=["sat","mon"])],
-                yaxis2=dict(gridcolor='#1e1e2e', linecolor='#1e1e2e', title='Volym'),
-                showlegend=False)
-            st.plotly_chart(fig_chart, width='stretch')
+        # Filter out already graded trades unless checkbox is checked
+        if not show_graded:
+            ungraded_mask = sorted_trades['_key'].map(
+                lambda k: st.session_state.annotations.get(k, {}).get('grade', '–') == '–')
+            selectable = sorted_trades[ungraded_mask]
         else:
-            if isinstance(chart_df, str):
-                st.warning(f"Kunde inte hämta kursdata för {trade['Ticker']}: {chart_df}")
-            else:
-                st.warning(f"Ingen kursdata tillgänglig för {trade['Ticker']}")
+            selectable = sorted_trades
 
-        # Notes
-        curr_notes = st.session_state.annotations.get(tk, {}).get('notes', '')
-        new_notes = st.text_area("Anteckningar", value=curr_notes, key=f"notes_{tk}", height=80,
-                                  placeholder="Skriv anteckningar om denna trade...")
-        if st.button("💾 SPARA ANTECKNING", key=f"savenote_{tk}"):
-            if tk not in st.session_state.annotations: st.session_state.annotations[tk] = {}
-            st.session_state.annotations[tk]['notes'] = new_notes
-            save_annotations()
-            st.success("Anteckning sparad")
-            st.rerun()
+        if selectable.empty:
+            st.success("🎉 Alla trades är betygsatta!")
+        else:
+            trade_options = []
+            for _, r in selectable.iterrows():
+                pnl_sign = "✅" if r['Vinst ($)'] > 0 else "❌"
+                strat_tag = f" [{st.session_state.annotations.get(r['_key'],{}).get('strategy','–')}]" if st.session_state.annotations.get(r['_key'],{}).get('strategy','–') != '–' else ""
+                grade_tag = f" ({st.session_state.annotations.get(r['_key'],{}).get('grade','–')[0]})" if st.session_state.annotations.get(r['_key'],{}).get('grade','–') != '–' else ""
+                trade_options.append(f"{pnl_sign} {r['Ticker']}  {r['Entry Datum']} → {r['Datum']}  ${r['Vinst ($)']:+,.0f}  {r['Riktning']}{strat_tag}{grade_tag}")
+
+            selected_idx = st.selectbox("Trade", range(len(trade_options)),
+                format_func=lambda i: trade_options[i], label_visibility="collapsed")
+            trade = selectable.iloc[selected_idx]
+            tk = trade_key(trade)
+
+            # Strategy + Grade + Save
+            col_s, col_g, col_save = st.columns([2, 2, 1])
+            with col_s:
+                curr_strat = st.session_state.annotations.get(tk, {}).get('strategy', '–')
+                new_strat = st.selectbox("Strategi", STRATEGIES,
+                    index=STRATEGIES.index(curr_strat) if curr_strat in STRATEGIES else 0,
+                    key=f"strat_{tk}")
+            with col_g:
+                curr_grade = st.session_state.annotations.get(tk, {}).get('grade', '–')
+                new_grade = st.selectbox("Betyg", GRADES,
+                    index=GRADES.index(curr_grade) if curr_grade in GRADES else 0,
+                    key=f"grade_{tk}")
+            with col_save:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("💾 SPARA", key=f"save_{tk}"):
+                    if tk not in st.session_state.annotations:
+                        st.session_state.annotations[tk] = {}
+                    st.session_state.annotations[tk]['strategy'] = new_strat
+                    st.session_state.annotations[tk]['grade'] = new_grade
+                    saved = save_annotations()
+                    if saved:
+                        st.success(f"Sparad: {trade['Ticker']} — {new_strat} / {new_grade}")
+                    else:
+                        st.warning("Sparad i sessionen. Exportera JSON för att behålla.")
+                    st.rerun()
+
+            # Trade info cards
+            col_i1, col_i2, col_i3, col_i4 = st.columns(4)
+            with col_i1: st.markdown(mcard("P/L", trade['Vinst ($)'], "dollar"), unsafe_allow_html=True)
+            with col_i2: st.markdown(mcard("VINST %", trade['Vinst %'], "pct"), unsafe_allow_html=True)
+            with col_i3: st.markdown(mcard("RIKTNING", 0, "raw", sub=trade['Riktning']), unsafe_allow_html=True)
+            with col_i4: st.markdown(mcard("HÅLLTID", trade.get('Hålltid (min)') or 0, "time"), unsafe_allow_html=True)
+
+            # Chart
+            st.markdown('<div class="section-header">KURSGRAF</div>', unsafe_allow_html=True)
+            with st.spinner(f"Hämtar kursdata för {trade['Ticker']}..."):
+                chart_df = fetch_chart_data(trade['Ticker'], trade['Entry Datum'], trade['Datum'])
+
+            if chart_df is not None and not isinstance(chart_df, str) and not chart_df.empty:
+                from plotly.subplots import make_subplots
+                fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                    vertical_spacing=0.03, row_heights=[0.75, 0.25])
+                fig_chart.add_trace(go.Candlestick(
+                    x=chart_df['Date'], open=chart_df['Open'], high=chart_df['High'],
+                    low=chart_df['Low'], close=chart_df['Close'],
+                    increasing_line_color='#00ff88', decreasing_line_color='#ff3366',
+                    increasing_fillcolor='#00ff88', decreasing_fillcolor='#ff3366',
+                    name='Pris'), row=1, col=1)
+                if 'Volume' in chart_df.columns and chart_df['Volume'].sum() > 0:
+                    vol_colors = ['#00ff88' if c >= o else '#ff3366'
+                                  for c, o in zip(chart_df['Close'], chart_df['Open'])]
+                    fig_chart.add_trace(go.Bar(x=chart_df['Date'], y=chart_df['Volume'],
+                        marker_color=vol_colors, opacity=0.4, showlegend=False), row=2, col=1)
+                entry_dt = pd.to_datetime(trade['Entry Datum'])
+                exit_dt  = pd.to_datetime(trade['Datum'])
+                entry_color = '#00ff88' if trade['Riktning'] == 'LONG' else '#ff3366'
+                exit_color  = '#ff3366' if trade['Riktning'] == 'LONG' else '#00ff88'
+                entry_row = chart_df[chart_df['Date'] >= entry_dt].head(1)
+                exit_row  = chart_df[chart_df['Date'] >= exit_dt].head(1)
+                if not entry_row.empty:
+                    fig_chart.add_trace(go.Scatter(
+                        x=[entry_row['Date'].iloc[0]], y=[float(entry_row['Low'].iloc[0]) * 0.98],
+                        mode='markers+text', marker=dict(symbol='triangle-up', size=16, color=entry_color),
+                        text=['ENTRY'], textposition='bottom center', textfont=dict(color=entry_color, size=10),
+                        showlegend=False), row=1, col=1)
+                if not exit_row.empty:
+                    fig_chart.add_trace(go.Scatter(
+                        x=[exit_row['Date'].iloc[0]], y=[float(exit_row['High'].iloc[0]) * 1.02],
+                        mode='markers+text', marker=dict(symbol='triangle-down', size=16, color=exit_color),
+                        text=['EXIT'], textposition='top center', textfont=dict(color=exit_color, size=10),
+                        showlegend=False), row=1, col=1)
+                fig_chart.update_layout(**PLOTLY_LAYOUT, height=500,
+                    title=f"{trade['Ticker']} — {trade['Entry Datum']} → {trade['Datum']}",
+                    xaxis_rangeslider_visible=False,
+                    xaxis_rangebreaks=[dict(bounds=["sat","mon"])],
+                    yaxis2=dict(gridcolor='#1e1e2e', linecolor='#1e1e2e', title='Volym'),
+                    showlegend=False)
+                st.plotly_chart(fig_chart, width='stretch')
+            else:
+                if isinstance(chart_df, str):
+                    st.warning(f"Kunde inte hämta kursdata för {trade['Ticker']}: {chart_df}")
+                else:
+                    st.warning(f"Ingen kursdata tillgänglig för {trade['Ticker']}")
+
+            # Notes
+            curr_notes = st.session_state.annotations.get(tk, {}).get('notes', '')
+            new_notes = st.text_area("Anteckningar", value=curr_notes, key=f"notes_{tk}", height=80,
+                                      placeholder="Skriv anteckningar om denna trade...")
+            if st.button("💾 SPARA ANTECKNING", key=f"savenote_{tk}"):
+                if tk not in st.session_state.annotations: st.session_state.annotations[tk] = {}
+                st.session_state.annotations[tk]['notes'] = new_notes
+                save_annotations()
+                st.success("Anteckning sparad")
+                st.rerun()
     else:
         st.info("Inga trades i valt intervall.")
 
