@@ -77,7 +77,8 @@ def load_annotations():
             st.session_state.annotations = {}
     # Migrate old grade format to new
     grade_map = {"A — Jättebra": "A", "B — Bra": "B", "C — Dålig": "C"}
-    for v in st.session_state.annotations.values():
+    for k, v in st.session_state.annotations.items():
+        if not isinstance(v, dict): continue
         if v.get('grade', '–') in grade_map:
             v['grade'] = grade_map[v['grade']]
     return st.session_state.annotations
