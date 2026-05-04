@@ -45,20 +45,20 @@ html,body,.stApp{background-color:var(--bg)!important;color:var(--text)!importan
 .block-container{padding:2rem!important;max-width:1100px!important;margin:0 auto!important;}
 .metric-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem;text-align:center;}
 .metric-card:hover{border-color:var(--accent);}
-.metric-label{font-family:'Space Mono',monospace;font-size:0.85rem;letter-spacing:0.15em;color:#9999aa;text-transform:uppercase;margin-bottom:0.4rem;}
+.metric-label{font-family:'Space Mono',monospace;font-size:0.85rem;letter-spacing:0.15em;color:#bbbbcc;text-transform:uppercase;margin-bottom:0.4rem;}
 .metric-value{font-family:'Space Mono',monospace;font-size:1.5rem;font-weight:700;line-height:1.1;}
 .metric-sub{font-family:'Space Mono',monospace;font-size:0.75rem;color:#ffffff;margin-top:0.2rem;}
 .positive{color:#00ff88;}.negative{color:#ff3366;}.neutral{color:var(--text);}
 .app-header{display:flex;align-items:baseline;gap:1rem;margin-bottom:2rem;border-bottom:1px solid var(--border);padding-bottom:1.5rem;}
 .app-title{font-family:'Syne',sans-serif;font-weight:800;font-size:2.5rem;color:var(--text);letter-spacing:-0.02em;}
-.app-subtitle{font-family:'Space Mono',monospace;font-size:0.9rem;color:#9999aa;letter-spacing:0.1em;}
-.section-header{font-family:'Space Mono',monospace;font-size:0.95rem;letter-spacing:0.2em;color:#9999aa;text-transform:uppercase;margin:1.5rem 0 1rem 0;padding-bottom:0.5rem;border-bottom:1px solid var(--border);}
+.app-subtitle{font-family:'Space Mono',monospace;font-size:0.9rem;color:#bbbbcc;letter-spacing:0.1em;}
+.section-header{font-family:'Space Mono',monospace;font-size:0.95rem;letter-spacing:0.2em;color:#bbbbcc;text-transform:uppercase;margin:1.5rem 0 1rem 0;padding-bottom:0.5rem;border-bottom:1px solid var(--border);}
 .live-dot{display:inline-block;width:8px;height:8px;background:var(--accent);border-radius:50%;margin-right:6px;animation:pulse 1.5s infinite;}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.8)}}
 .stButton>button{background:transparent!important;border:1px solid var(--accent)!important;color:var(--accent)!important;font-family:'Space Mono',monospace!important;font-size:0.75rem!important;letter-spacing:0.1em!important;border-radius:6px!important;}
 .stButton>button:hover{background:var(--accent)!important;color:var(--bg)!important;}
 .stTabs [data-baseweb="tab-list"]{background:transparent!important;border-bottom:1px solid var(--border)!important;}
-.stTabs [data-baseweb="tab"]{background:transparent!important;color:#9999aa!important;font-family:'Space Mono',monospace!important;font-size:0.9rem!important;letter-spacing:0.1em!important;border:none!important;}
+.stTabs [data-baseweb="tab"]{background:transparent!important;color:#bbbbcc!important;font-family:'Space Mono',monospace!important;font-size:0.9rem!important;letter-spacing:0.1em!important;border:none!important;}
 .stTabs [aria-selected="true"]{color:var(--accent)!important;border-bottom:2px solid var(--accent)!important;}
 </style>
 """, unsafe_allow_html=True)
@@ -459,7 +459,7 @@ if not res_df.empty:
 
     if fifo_warnings:
         with st.expander(f"🔴 FIFO-VARNINGAR — {len(fifo_warnings)} misstänkta trades", expanded=False):
-            st.markdown('<div style="font-family:Space Mono,monospace;font-size:0.75rem;color:#9999aa;margin-bottom:8px;">Dessa trades har ovanligt stora värden — kontrollera rådata.</div>', unsafe_allow_html=True)
+            st.markdown('<div style="font-family:Space Mono,monospace;font-size:0.75rem;color:#bbbbcc;margin-bottom:8px;">Dessa trades har ovanligt stora värden — kontrollera rådata.</div>', unsafe_allow_html=True)
             for w in fifo_warnings:
                 st.markdown(f'<div style="font-family:Space Mono,monospace;font-size:0.75rem;color:#ff3366;padding:3px 0;">{w}</div>', unsafe_allow_html=True)
 
@@ -1038,7 +1038,7 @@ if not filtered.empty:
                     f'<div class="metric-card">'
                     f'<div class="metric-label">BETYG</div>'
                     f'<div class="metric-value" style="color:{grade_color};font-size:2rem;">{row["Betyg"]}</div>'
-                    f'<div class="metric-sub" style="color:#9999aa;line-height:1.8;">'
+                    f'<div class="metric-sub" style="color:#bbbbcc;line-height:1.8;">'
                     f'{int(row["Trades"])} trades<br>'
                     f'Win rate: {row["WinRate"]:.0f}%<br>'
                     f'Snitt: {row["AvgPct"]:+.0f}% / ${row["AvgDollar"]:+,.0f}<br>'
