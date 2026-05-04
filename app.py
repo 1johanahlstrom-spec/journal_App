@@ -967,49 +967,43 @@ with tab4:
 
 with tab5:
     if not filtered.empty:
-        # --- Trade list ---
+        # --- Trade list with row selection ---
         display = filtered[['Datum','Entry Datum','Ticker','Riktning','Vinst ($)','Vinst %','Hålltid (min)']].copy()
         display['_key'] = filtered['_key']
         display['Strategi'] = display['_key'].map(lambda k: st.session_state.annotations.get(k, {}).get('strategy', '–'))
         display['Betyg']    = display['_key'].map(lambda k: st.session_state.annotations.get(k, {}).get('grade', '–'))
         display['Hålltid']  = display['Hålltid (min)'].apply(fmt_duration)
-        display_show = display.drop(columns=['Hålltid (min)', '_key']).sort_values('Datum', ascending=False)
-        def color_pnl(val):
-            if isinstance(val, (int, float)):
-                return f'color: {"#00ff88" if val > 0 else "#ff3366" if val < 0 else "#888899"};'
-            return ''
-        styled = display_show.style.map(color_pnl, subset=['Vinst ($)', 'Vinst %'])\
-                              .format({'Vinst ($)': '{:+,.2f}', 'Vinst %': '{:+.1f}%'})
-        st.dataframe(styled, width='stretch', hide_index=True, height=400)
+        display_show = display.drop(columns=['Hålltid (min)']).sort_values('Datum', ascending=False).reset_index(drop=True)
 
-        # --- Trade detail selector ---
-        st.markdown('<div class="section-header">TRADE DETALJ — VÄLJ TRADE</div>', unsafe_allow_html=True)
+        st.caption("📊 Klicka på en rad för att visa graf och sätta betyg")
+        selection = st.dataframe(
+            display_show.drop(columns=['_key']).style
+                .map(lambda v: f'color: {"#00ff88" if v > 0 else "#ff3366" if v < 0 else "#888899"};' if isinstance(v, (int,float)) else '',
+                     subset=['Vinst ($)', 'Vinst %'])
+                .format({'Vinst ($)': '{:+,.2f}', 'Vinst %': '{:+.1f}%'}),
+            width='stretch', hide_index=True, height=400,
+            on_select="rerun", selection_mode="single-row",
+        )
 
-        show_graded = st.checkbox("Visa redan betygsatta", value=False)
+        # --- Show chart when row is selected ---
+        selected_rows = selection.selection.rows if selection and selection.selection else []
 
-        sorted_trades = filtered.sort_values('Datum', ascending=False)
-        # Filter out already graded trades unless checkbox is checked
-        if not show_graded:
-            ungraded_mask = sorted_trades['_key'].map(
-                lambda k: st.session_state.annotations.get(k, {}).get('grade', '–') == '–')
-            selectable = sorted_trades[ungraded_mask]
-        else:
-            selectable = sorted_trades
+        if selected_rows:
+            sel_idx = selected_rows[0]
+            sel_row = display_show.iloc[sel_idx]
+            tk = sel_row['_key']
 
-        if selectable.empty:
-            st.success("🎉 Alla trades är betygsatta!")
-        else:
-            trade_options = []
-            for _, r in selectable.iterrows():
-                pnl_sign = "✅" if r['Vinst ($)'] > 0 else "❌"
-                strat_tag = f" [{st.session_state.annotations.get(r['_key'],{}).get('strategy','–')}]" if st.session_state.annotations.get(r['_key'],{}).get('strategy','–') != '–' else ""
-                grade_tag = f" ({st.session_state.annotations.get(r['_key'],{}).get('grade','–')})" if st.session_state.annotations.get(r['_key'],{}).get('grade','–') != '–' else ""
-                trade_options.append(f"{pnl_sign} {r['Ticker']}  {r['Entry Datum']} → {r['Datum']}  ${r['Vinst ($)']:+,.0f}  {r['Riktning']}{strat_tag}{grade_tag}")
+            # Find full trade data from filtered
+            trade = filtered[filtered['_key'] == tk].iloc[0]
 
-            selected_idx = st.selectbox("Trade", range(len(trade_options)),
-                format_func=lambda i: trade_options[i], label_visibility="collapsed")
-            trade = selectable.iloc[selected_idx]
-            tk = trade_key(trade)
+            st.markdown(f'<div class="section-header">📊 {trade["Ticker"]} — {trade["Entry Datum"]} → {trade["Datum"]}</div>', unsafe_allow_html=True)
+
+            # Trade info cards
+            col_i1, col_i2, col_i3, col_i4 = st.columns(4)
+            with col_i1: st.markdown(mcard("P/L", trade['Vinst ($)'], "dollar"), unsafe_allow_html=True)
+            with col_i2: st.markdown(mcard("VINST %", trade['Vinst %'], "pct"), unsafe_allow_html=True)
+            with col_i3: st.markdown(mcard("RIKTNING", 0, "raw", sub=trade['Riktning']), unsafe_allow_html=True)
+            with col_i4: st.markdown(mcard("HÅLLTID", trade.get('Hålltid (min)') or 0, "time"), unsafe_allow_html=True)
 
             # Strategy + Grade + Save
             col_s, col_g, col_save = st.columns([2, 2, 1])
@@ -1035,21 +1029,14 @@ with tab5:
                     if saved:
                         st.success(f"Sparad: {trade['Ticker']} — {new_strat} / {new_grade}")
                     else:
-                        st.warning("Sparad i sessionen. Exportera JSON för att behålla.")
+                        st.warning("Sparad i sessionen.")
                     st.rerun()
-
-            # Trade info cards
-            col_i1, col_i2, col_i3, col_i4 = st.columns(4)
-            with col_i1: st.markdown(mcard("P/L", trade['Vinst ($)'], "dollar"), unsafe_allow_html=True)
-            with col_i2: st.markdown(mcard("VINST %", trade['Vinst %'], "pct"), unsafe_allow_html=True)
-            with col_i3: st.markdown(mcard("RIKTNING", 0, "raw", sub=trade['Riktning']), unsafe_allow_html=True)
-            with col_i4: st.markdown(mcard("HÅLLTID", trade.get('Hålltid (min)') or 0, "time"), unsafe_allow_html=True)
 
             # Chart
             hold_min = trade.get('Hålltid (min)')
             auto_intraday = hold_min is not None and not (isinstance(hold_min, float) and math.isnan(hold_min)) and hold_min < 1440
             use_5m = st.checkbox("5-minuters graf", value=auto_intraday, key=f"5m_{tk}")
-            forced_hold = 60 if use_5m else 9999  # force 5m or daily
+            forced_hold = 60 if use_5m else 9999
             with st.spinner(f"Hämtar kursdata för {trade['Ticker']}..."):
                 chart_result = fetch_chart_data(trade['Ticker'], trade['Entry Datum'], trade['Datum'], forced_hold)
                 chart_df, chart_interval = chart_result if isinstance(chart_result, tuple) else (chart_result, '1d')
@@ -1074,7 +1061,6 @@ with tab5:
 
                 entry_dt = pd.to_datetime(trade['Entry Datum'])
                 exit_dt  = pd.to_datetime(trade['Datum'])
-                # Normalize timezone: strip tz from chart data if present
                 if chart_df['Date'].dt.tz is not None:
                     chart_df['Date'] = chart_df['Date'].dt.tz_localize(None)
                 entry_color = '#00ff88' if trade['Riktning'] == 'LONG' else '#ff3366'
@@ -1094,38 +1080,30 @@ with tab5:
                         text=['EXIT'], textposition='top center', textfont=dict(color=exit_color, size=10),
                         showlegend=False), row=1, col=1)
 
-                # Rangebreaks: hide non-trading periods
                 if chart_interval == '5m':
-                    # Auto-detect gaps > 10 min in the data and hide them
                     dates_sorted = chart_df['Date'].sort_values().reset_index(drop=True)
                     gap_breaks = []
                     for i in range(1, len(dates_sorted)):
                         gap = (dates_sorted[i] - dates_sorted[i-1]).total_seconds() / 60
-                        if gap > 10:  # gap larger than 10 minutes
-                            gap_breaks.append(dict(
-                                bounds=[dates_sorted[i-1].isoformat(), dates_sorted[i].isoformat()]
-                            ))
+                        if gap > 10:
+                            gap_breaks.append(dict(bounds=[dates_sorted[i-1].isoformat(), dates_sorted[i].isoformat()]))
                     rangebreaks = gap_breaks
                 else:
-                    # Find all dates missing from data (holidays) and hide them
                     all_dates = pd.date_range(chart_df['Date'].min(), chart_df['Date'].max(), freq='B')
                     trading_dates = set(chart_df['Date'].dt.normalize())
                     holidays = [d for d in all_dates if d not in trading_dates]
-                    rangebreaks = [
-                        dict(bounds=["sat","mon"]),
-                        dict(values=[d.strftime('%Y-%m-%d') for d in holidays]),
-                    ]
+                    rangebreaks = [dict(bounds=["sat","mon"]),
+                                   dict(values=[d.strftime('%Y-%m-%d') for d in holidays])]
 
                 fig_chart.update_layout(**PLOTLY_LAYOUT, height=500,
                     title=f"{trade['Ticker']} — {trade['Entry Datum']} → {trade['Datum']}",
-                    xaxis_rangeslider_visible=False,
-                    xaxis_rangebreaks=rangebreaks,
+                    xaxis_rangeslider_visible=False, xaxis_rangebreaks=rangebreaks,
                     yaxis2=dict(gridcolor='#1e1e2e', linecolor='#1e1e2e', title='Volym'),
                     showlegend=False)
                 st.plotly_chart(fig_chart, width='stretch')
             else:
                 if isinstance(chart_df, str):
-                    st.warning(f"Kunde inte hämta kursdata för {trade['Ticker']}: {chart_df}")
+                    st.warning(f"Kunde inte hämta kursdata: {chart_df}")
                 else:
                     st.warning(f"Ingen kursdata tillgänglig för {trade['Ticker']}")
 
