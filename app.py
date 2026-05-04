@@ -1096,10 +1096,16 @@ with tab5:
 
                 # Rangebreaks: hide non-trading periods
                 if chart_interval == '5m':
-                    rangebreaks = [
-                        dict(bounds=["sat","mon"]),
-                        dict(bounds=[20, 4], pattern="hour"),
-                    ]
+                    # Auto-detect gaps > 10 min in the data and hide them
+                    dates_sorted = chart_df['Date'].sort_values().reset_index(drop=True)
+                    gap_breaks = []
+                    for i in range(1, len(dates_sorted)):
+                        gap = (dates_sorted[i] - dates_sorted[i-1]).total_seconds() / 60
+                        if gap > 10:  # gap larger than 10 minutes
+                            gap_breaks.append(dict(
+                                bounds=[dates_sorted[i-1].isoformat(), dates_sorted[i].isoformat()]
+                            ))
+                    rangebreaks = gap_breaks
                 else:
                     # Find all dates missing from data (holidays) and hide them
                     all_dates = pd.date_range(chart_df['Date'].min(), chart_df['Date'].max(), freq='B')
