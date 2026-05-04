@@ -31,6 +31,20 @@ STRATEGIES = ["–", "Breakout / Flag", "Episodic Pivot", "Parabolic Short"]
 GRADES     = ["–", "A", "B", "C", "F"]
 ANNOTATIONS_FILE = os.path.join(base_dir, "annotations.json")
 
+# --- SUPABASE ---
+SUPABASE_URL = get_secret("SUPABASE_URL")
+SUPABASE_KEY = get_secret("SUPABASE_KEY")
+_supabase = None
+
+def get_db():
+    global _supabase
+    if _supabase is None and SUPABASE_URL and SUPABASE_KEY:
+        try:
+            from supabase import create_client
+            _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        except: pass
+    return _supabase
+
 # --- PAGE ---
 st.set_page_config(page_title="Johans Trading", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
@@ -67,15 +81,34 @@ html,body,.stApp{background-color:var(--bg)!important;color:var(--text)!importan
 # --- ANNOTATIONS ---
 def load_annotations():
     if 'annotations' not in st.session_state:
-        try:
-            if os.path.exists(ANNOTATIONS_FILE):
-                with open(ANNOTATIONS_FILE, 'r', encoding='utf-8') as f:
-                    st.session_state.annotations = json.load(f)
-            else:
+        db = get_db()
+        if db:
+            try:
+                # Load annotations from Supabase
+                ann_data = db.table('annotations').select('*').execute()
+                st.session_state.annotations = {
+                    r['trade_key']: {'strategy': r['strategy'], 'grade': r['grade'], 'notes': r.get('notes', '')}
+                    for r in ann_data.data
+                }
+                # Load wires from Supabase
+                wire_data = db.table('wires').select('*').execute()
+                st.session_state.annotations['_wires'] = [
+                    {'type': w['type'], 'amount': float(w['amount']), 'date': w['date'], 'id': w['id']}
+                    for w in wire_data.data
+                ]
+            except Exception as e:
                 st.session_state.annotations = {}
-        except Exception as e:
-            st.session_state.annotations = {}
-    # Migrate old grade format to new
+        else:
+            # Fallback to JSON file
+            try:
+                if os.path.exists(ANNOTATIONS_FILE):
+                    with open(ANNOTATIONS_FILE, 'r', encoding='utf-8') as f:
+                        st.session_state.annotations = json.load(f)
+                else:
+                    st.session_state.annotations = {}
+            except:
+                st.session_state.annotations = {}
+    # Migrate old grade format
     grade_map = {"A — Jättebra": "A", "B — Bra": "B", "C — Dålig": "C"}
     for k, v in st.session_state.annotations.items():
         if not isinstance(v, dict): continue
@@ -83,7 +116,40 @@ def load_annotations():
             v['grade'] = grade_map[v['grade']]
     return st.session_state.annotations
 
-def save_annotations():
+def save_annotation(trade_key, strategy, grade, notes=''):
+    db = get_db()
+    if db:
+        try:
+            db.table('annotations').upsert({
+                'trade_key': trade_key, 'strategy': strategy,
+                'grade': grade, 'notes': notes, 'updated_at': datetime.now().isoformat()
+            }).execute()
+            return True
+        except: pass
+    # Fallback: save to JSON
+    return _save_json()
+
+def save_wire(wire_type, amount, date):
+    db = get_db()
+    if db:
+        try:
+            result = db.table('wires').insert({
+                'type': wire_type, 'amount': amount, 'date': str(date)
+            }).execute()
+            return True
+        except: pass
+    return _save_json()
+
+def delete_wire(wire):
+    db = get_db()
+    if db and 'id' in wire:
+        try:
+            db.table('wires').delete().eq('id', wire['id']).execute()
+            return True
+        except: pass
+    return _save_json()
+
+def _save_json():
     try:
         with open(ANNOTATIONS_FILE, 'w', encoding='utf-8') as f:
             json.dump(st.session_state.annotations, f, indent=2, ensure_ascii=False)
@@ -137,10 +203,26 @@ def fetch_chart_data(ticker, start_date, end_date, hold_minutes=None):
         is_daytrade = hold_minutes is not None and hold_minutes < 1440
 
         if is_daytrade:
-            # 5-min candles for day trades (yfinance: max 60 days back)
+            interval = '5m'
+            # Try Supabase cache first for 5-min data
+            db = get_db()
+            if db:
+                try:
+                    start_dt = (pd.to_datetime(start_date) - timedelta(days=2)).isoformat()
+                    end_dt   = (pd.to_datetime(end_date)   + timedelta(days=2)).isoformat()
+                    cached = db.table('chart_cache').select('*')\
+                        .eq('ticker', ticker).eq('interval', '5m')\
+                        .gte('date', start_dt).lte('date', end_dt)\
+                        .order('date').execute()
+                    if cached.data and len(cached.data) > 10:
+                        df = pd.DataFrame(cached.data)
+                        df['Date'] = pd.to_datetime(df['date'])
+                        df = df.rename(columns={'open':'Open','high':'High','low':'Low','close':'Close','volume':'Volume'})
+                        return df[['Date','Open','High','Low','Close','Volume']], '5m'
+                except: pass
+
             start = (pd.to_datetime(start_date) - timedelta(days=2)).strftime('%Y-%m-%d')
             end   = (pd.to_datetime(end_date)   + timedelta(days=2)).strftime('%Y-%m-%d')
-            interval = '5m'
         else:
             start = (pd.to_datetime(start_date) - timedelta(days=45)).strftime('%Y-%m-%d')
             end   = (pd.to_datetime(end_date)   + timedelta(days=10)).strftime('%Y-%m-%d')
@@ -152,7 +234,6 @@ def fetch_chart_data(ticker, start_date, end_date, hold_minutes=None):
                 df = yf.download(ticker + suffix, start=start, end=end, interval=interval, progress=False, auto_adjust=True)
                 if not df.empty: break
         if df.empty and interval == '5m':
-            # Fallback: 5-min data not available, try daily instead
             start = (pd.to_datetime(start_date) - timedelta(days=45)).strftime('%Y-%m-%d')
             end   = (pd.to_datetime(end_date)   + timedelta(days=10)).strftime('%Y-%m-%d')
             df = yf.download(ticker, start=start, end=end, interval='1d', progress=False, auto_adjust=True)
@@ -163,6 +244,23 @@ def fetch_chart_data(ticker, start_date, end_date, hold_minutes=None):
         df = df.reset_index()
         if 'Datetime' in df.columns:
             df = df.rename(columns={'Datetime': 'Date'})
+
+        # Cache 5-min data to Supabase for permanent storage
+        if interval == '5m' and db:
+            try:
+                rows = []
+                for _, r in df.iterrows():
+                    rows.append({
+                        'ticker': ticker, 'interval': '5m',
+                        'date': r['Date'].isoformat(),
+                        'open': float(r['Open']), 'high': float(r['High']),
+                        'low': float(r['Low']), 'close': float(r['Close']),
+                        'volume': int(r.get('Volume', 0) or 0),
+                    })
+                if rows:
+                    db.table('chart_cache').upsert(rows).execute()
+            except: pass
+
         return df, interval
     except Exception as e:
         return str(e), '1d'
@@ -326,7 +424,7 @@ def mcard(label, value, fmt="dollar", sub=None):
 
 
 # --- HEADER ---
-st.markdown("""<div class="app-header"><span class="app-title">JOHANS TRADING</span><span class="app-subtitle">// TRADEZERO ACCOUNT ANALYTICS</span></div>""", unsafe_allow_html=True)
+st.markdown(f"""<div class="app-header"><span class="app-title">JOHANS TRADING</span><span class="app-subtitle">// TRADEZERO ACCOUNT ANALYTICS {'  ● DB' if get_db() else ''}</span></div>""", unsafe_allow_html=True)
 
 # --- CONTROLS (top bar instead of sidebar) ---
 ctrl_col1, ctrl_col2 = st.columns([3, 1])
@@ -355,7 +453,18 @@ with ctrl_col1:
                 try:
                     imported = json.loads(uploaded.read().decode('utf-8'))
                     st.session_state.annotations = imported
-                    save_annotations()
+                    # Sync to Supabase if available
+                    db = get_db()
+                    if db:
+                        for k, v in imported.items():
+                            if k == '_wires': continue
+                            if isinstance(v, dict):
+                                save_annotation(k, v.get('strategy','–'), v.get('grade','–'), v.get('notes',''))
+                        wires = imported.get('_wires', [])
+                        for w in wires:
+                            save_wire(w['type'], w['amount'], w['date'])
+                    else:
+                        _save_json()
                     st.success(f"Importerade {len(imported)} anteckningar")
                     st.rerun()
                 except:
@@ -619,7 +728,7 @@ if not filtered.empty:
                         'amount': float(wire_amount),
                         'date': str(wire_date),
                     })
-                    save_annotations()
+                    save_wire(wire_type, float(wire_amount), wire_date)
                     st.success(f"Wire {wire_type} ${wire_amount:,.0f} sparad")
                     st.rerun()
 
@@ -638,7 +747,7 @@ if not filtered.empty:
                 with col_del:
                     if st.button("🗑", key=f"del_wire_{i}_{w['date']}"):
                         st.session_state.annotations['_wires'].remove(w)
-                        save_annotations()
+                        delete_wire(w)
                         st.rerun()
 
 
@@ -921,7 +1030,8 @@ with tab5:
                         st.session_state.annotations[tk] = {}
                     st.session_state.annotations[tk]['strategy'] = new_strat
                     st.session_state.annotations[tk]['grade'] = new_grade
-                    saved = save_annotations()
+                    curr_notes = st.session_state.annotations.get(tk, {}).get('notes', '')
+                    saved = save_annotation(tk, new_strat, new_grade, curr_notes)
                     if saved:
                         st.success(f"Sparad: {trade['Ticker']} — {new_strat} / {new_grade}")
                     else:
@@ -1017,7 +1127,9 @@ with tab5:
             if st.button("💾 SPARA ANTECKNING", key=f"savenote_{tk}"):
                 if tk not in st.session_state.annotations: st.session_state.annotations[tk] = {}
                 st.session_state.annotations[tk]['notes'] = new_notes
-                save_annotations()
+                strat = st.session_state.annotations[tk].get('strategy', '–')
+                grade = st.session_state.annotations[tk].get('grade', '–')
+                save_annotation(tk, strat, grade, new_notes)
                 st.success("Anteckning sparad")
                 st.rerun()
     else:
