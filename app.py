@@ -925,14 +925,21 @@ with tab5:
                         text=['EXIT'], textposition='top center', textfont=dict(color=exit_color, size=10),
                         showlegend=False), row=1, col=1)
 
-                # Rangebreaks: hide weekends (daily) or overnight gaps (intraday)
+                # Rangebreaks: hide non-trading periods
                 if chart_interval == '5m':
                     rangebreaks = [
                         dict(bounds=["sat","mon"]),
-                        dict(bounds=[20, 4], pattern="hour"),  # hide overnight 8pm-4am
+                        dict(bounds=[20, 4], pattern="hour"),
                     ]
                 else:
-                    rangebreaks = [dict(bounds=["sat","mon"])]
+                    # Find all dates missing from data (holidays) and hide them
+                    all_dates = pd.date_range(chart_df['Date'].min(), chart_df['Date'].max(), freq='B')
+                    trading_dates = set(chart_df['Date'].dt.normalize())
+                    holidays = [d for d in all_dates if d not in trading_dates]
+                    rangebreaks = [
+                        dict(bounds=["sat","mon"]),
+                        dict(values=[d.strftime('%Y-%m-%d') for d in holidays]),
+                    ]
 
                 fig_chart.update_layout(**PLOTLY_LAYOUT, height=500,
                     title=f"{trade['Ticker']} — {trade['Entry Datum']} → {trade['Datum']}",
