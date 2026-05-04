@@ -130,24 +130,41 @@ def fetch_positions():
     except: return []
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_chart_data(ticker, start_date, end_date):
+def fetch_chart_data(ticker, start_date, end_date, hold_minutes=None):
     try:
         import yfinance as yf
-        start = (pd.to_datetime(start_date) - timedelta(days=45)).strftime('%Y-%m-%d')
-        end   = (pd.to_datetime(end_date)   + timedelta(days=10)).strftime('%Y-%m-%d')
-        df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+        is_daytrade = hold_minutes is not None and hold_minutes < 1440
+
+        if is_daytrade:
+            # 5-min candles for day trades (yfinance: max 60 days back)
+            start = (pd.to_datetime(start_date) - timedelta(days=2)).strftime('%Y-%m-%d')
+            end   = (pd.to_datetime(end_date)   + timedelta(days=2)).strftime('%Y-%m-%d')
+            interval = '5m'
+        else:
+            start = (pd.to_datetime(start_date) - timedelta(days=45)).strftime('%Y-%m-%d')
+            end   = (pd.to_datetime(end_date)   + timedelta(days=10)).strftime('%Y-%m-%d')
+            interval = '1d'
+
+        df = yf.download(ticker, start=start, end=end, interval=interval, progress=False, auto_adjust=True)
         if df.empty:
-            # Try with common suffixes for different exchanges
             for suffix in ['.ST', '.L', '.TO']:
-                df = yf.download(ticker + suffix, start=start, end=end, progress=False, auto_adjust=True)
+                df = yf.download(ticker + suffix, start=start, end=end, interval=interval, progress=False, auto_adjust=True)
                 if not df.empty: break
-        if df.empty: return None
+        if df.empty and interval == '5m':
+            # Fallback: 5-min data not available, try daily instead
+            start = (pd.to_datetime(start_date) - timedelta(days=45)).strftime('%Y-%m-%d')
+            end   = (pd.to_datetime(end_date)   + timedelta(days=10)).strftime('%Y-%m-%d')
+            df = yf.download(ticker, start=start, end=end, interval='1d', progress=False, auto_adjust=True)
+            interval = '1d'
+        if df.empty: return None, interval
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         df = df.reset_index()
-        return df
+        if 'Datetime' in df.columns:
+            df = df.rename(columns={'Datetime': 'Date'})
+        return df, interval
     except Exception as e:
-        return str(e)
+        return str(e), '1d'
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_news(tickers):
@@ -863,9 +880,12 @@ with tab5:
             with col_i4: st.markdown(mcard("HÅLLTID", trade.get('Hålltid (min)') or 0, "time"), unsafe_allow_html=True)
 
             # Chart
-            st.markdown('<div class="section-header">KURSGRAF</div>', unsafe_allow_html=True)
+            hold_min = trade.get('Hålltid (min)')
             with st.spinner(f"Hämtar kursdata för {trade['Ticker']}..."):
-                chart_df = fetch_chart_data(trade['Ticker'], trade['Entry Datum'], trade['Datum'])
+                chart_result = fetch_chart_data(trade['Ticker'], trade['Entry Datum'], trade['Datum'], hold_min)
+                chart_df, chart_interval = chart_result if isinstance(chart_result, tuple) else (chart_result, '1d')
+            chart_label = "5 MIN" if chart_interval == '5m' else "DAGLIG"
+            st.markdown(f'<div class="section-header">KURSGRAF — {chart_label}</div>', unsafe_allow_html=True)
 
             if chart_df is not None and not isinstance(chart_df, str) and not chart_df.empty:
                 from plotly.subplots import make_subplots
@@ -882,6 +902,7 @@ with tab5:
                                   for c, o in zip(chart_df['Close'], chart_df['Open'])]
                     fig_chart.add_trace(go.Bar(x=chart_df['Date'], y=chart_df['Volume'],
                         marker_color=vol_colors, opacity=0.4, showlegend=False), row=2, col=1)
+
                 entry_dt = pd.to_datetime(trade['Entry Datum'])
                 exit_dt  = pd.to_datetime(trade['Datum'])
                 entry_color = '#00ff88' if trade['Riktning'] == 'LONG' else '#ff3366'
@@ -900,10 +921,20 @@ with tab5:
                         mode='markers+text', marker=dict(symbol='triangle-down', size=16, color=exit_color),
                         text=['EXIT'], textposition='top center', textfont=dict(color=exit_color, size=10),
                         showlegend=False), row=1, col=1)
+
+                # Rangebreaks: hide weekends (daily) or overnight gaps (intraday)
+                if chart_interval == '5m':
+                    rangebreaks = [
+                        dict(bounds=["sat","mon"]),
+                        dict(bounds=[20, 4], pattern="hour"),  # hide overnight 8pm-4am
+                    ]
+                else:
+                    rangebreaks = [dict(bounds=["sat","mon"])]
+
                 fig_chart.update_layout(**PLOTLY_LAYOUT, height=500,
                     title=f"{trade['Ticker']} — {trade['Entry Datum']} → {trade['Datum']}",
                     xaxis_rangeslider_visible=False,
-                    xaxis_rangebreaks=[dict(bounds=["sat","mon"])],
+                    xaxis_rangebreaks=rangebreaks,
                     yaxis2=dict(gridcolor='#1e1e2e', linecolor='#1e1e2e', title='Volym'),
                     showlegend=False)
                 st.plotly_chart(fig_chart, width='stretch')
