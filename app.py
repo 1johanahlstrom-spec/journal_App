@@ -1074,6 +1074,9 @@ with tab5:
 
                 entry_dt = pd.to_datetime(trade['Entry Datum'])
                 exit_dt  = pd.to_datetime(trade['Datum'])
+                # Normalize timezone: strip tz from chart data if present
+                if chart_df['Date'].dt.tz is not None:
+                    chart_df['Date'] = chart_df['Date'].dt.tz_localize(None)
                 entry_color = '#00ff88' if trade['Riktning'] == 'LONG' else '#ff3366'
                 exit_color  = '#ff3366' if trade['Riktning'] == 'LONG' else '#00ff88'
                 entry_row = chart_df[chart_df['Date'] >= entry_dt].head(1)
