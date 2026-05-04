@@ -344,7 +344,7 @@ with ctrl_col1:
             strat_filter = st.selectbox("Strategi", ["Alla"] + STRATEGIES[1:])
         with fc5:
             ann = load_annotations()
-            tagged_count = sum(1 for v in ann.values() if v.get('strategy','–') != '–' or v.get('grade','–') != '–')
+            tagged_count = sum(1 for v in ann.values() if isinstance(v, dict) and (v.get('strategy','–') != '–' or v.get('grade','–') != '–'))
             st.caption(f"{tagged_count} taggade trades")
             if st.session_state.get('annotations'):
                 st.download_button("⬇ EXPORTERA",
