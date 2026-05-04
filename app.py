@@ -50,7 +50,7 @@ html,body,.stApp{background-color:var(--bg)!important;color:var(--text)!importan
 .metric-sub{font-family:'Space Mono',monospace;font-size:0.75rem;color:#ffffff;margin-top:0.2rem;}
 .positive{color:#00ff88;}.negative{color:#ff3366;}.neutral{color:var(--text);}
 .app-header{display:flex;align-items:baseline;gap:1rem;margin-bottom:1.2rem;border-bottom:1px solid var(--border);padding-bottom:1rem;}
-.app-title{font-family:'Syne',sans-serif;font-weight:800;font-size:2.5rem;color:var(--text);letter-spacing:-0.05em;transform:scaleX(0.85);transform-origin:left;}
+.app-title{font-family:'Syne',sans-serif;font-weight:800;font-size:2rem;color:var(--text);letter-spacing:-0.04em;transform:scaleX(0.8);transform-origin:left;white-space:nowrap;}
 .app-subtitle{font-family:'Space Mono',monospace;font-size:0.9rem;color:#bbbbcc;letter-spacing:0.1em;}
 .section-header{font-family:'Space Mono',monospace;font-size:0.95rem;letter-spacing:0.2em;color:#bbbbcc;text-transform:uppercase;margin:1rem 0 0.7rem 0;padding-bottom:0.4rem;border-bottom:1px solid var(--border);}
 .live-dot{display:inline-block;width:8px;height:8px;background:var(--accent);border-radius:50%;margin-right:6px;animation:pulse 1.5s infinite;}
