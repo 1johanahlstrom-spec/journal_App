@@ -200,34 +200,33 @@ def fetch_positions():
 def fetch_chart_data(ticker, start_date, end_date, hold_minutes=None):
     try:
         import yfinance as yf
+        db = get_db()
         is_daytrade = hold_minutes is not None and hold_minutes < 1440
 
         if is_daytrade:
             interval = '5m'
-            # Try Supabase cache first for 5-min data
-            db = get_db()
-            if db:
-                try:
-                    start_dt = (pd.to_datetime(start_date) - timedelta(days=2)).isoformat()
-                    end_dt   = (pd.to_datetime(end_date)   + timedelta(days=2)).isoformat()
-                    cached = db.table('chart_cache').select('*')\
-                        .eq('ticker', ticker).eq('interval', '5m')\
-                        .gte('date', start_dt).lte('date', end_dt)\
-                        .order('date').execute()
-                    if cached.data and len(cached.data) > 10:
-                        df = pd.DataFrame(cached.data)
-                        df['Date'] = pd.to_datetime(df['date'])
-                        df = df.rename(columns={'open':'Open','high':'High','low':'Low','close':'Close','volume':'Volume'})
-                        return df[['Date','Open','High','Low','Close','Volume']], '5m'
-                except: pass
-
             start = (pd.to_datetime(start_date) - timedelta(days=2)).strftime('%Y-%m-%d')
             end   = (pd.to_datetime(end_date)   + timedelta(days=2)).strftime('%Y-%m-%d')
         else:
+            interval = '1d'
             start = (pd.to_datetime(start_date) - timedelta(days=45)).strftime('%Y-%m-%d')
             end   = (pd.to_datetime(end_date)   + timedelta(days=10)).strftime('%Y-%m-%d')
-            interval = '1d'
 
+        # Try Supabase cache first
+        if db:
+            try:
+                cached = db.table('chart_cache').select('*')\
+                    .eq('ticker', ticker).eq('interval', interval)\
+                    .gte('date', start).lte('date', end)\
+                    .order('date').execute()
+                if cached.data and len(cached.data) > 5:
+                    df = pd.DataFrame(cached.data)
+                    df['Date'] = pd.to_datetime(df['date'])
+                    df = df.rename(columns={'open':'Open','high':'High','low':'Low','close':'Close','volume':'Volume'})
+                    return df[['Date','Open','High','Low','Close','Volume']], interval
+            except: pass
+
+        # Fetch from Yahoo
         df = yf.download(ticker, start=start, end=end, interval=interval, progress=False, auto_adjust=True)
         if df.empty:
             for suffix in ['.ST', '.L', '.TO']:
@@ -245,20 +244,21 @@ def fetch_chart_data(ticker, start_date, end_date, hold_minutes=None):
         if 'Datetime' in df.columns:
             df = df.rename(columns={'Datetime': 'Date'})
 
-        # Cache 5-min data to Supabase for permanent storage
-        if interval == '5m' and db:
+        # Save to Supabase cache
+        if db:
             try:
                 rows = []
                 for _, r in df.iterrows():
                     rows.append({
-                        'ticker': ticker, 'interval': '5m',
+                        'ticker': ticker, 'interval': interval,
                         'date': r['Date'].isoformat(),
                         'open': float(r['Open']), 'high': float(r['High']),
                         'low': float(r['Low']), 'close': float(r['Close']),
                         'volume': int(r.get('Volume', 0) or 0),
                     })
-                if rows:
-                    db.table('chart_cache').upsert(rows).execute()
+                # Batch upsert in chunks of 500
+                for i in range(0, len(rows), 500):
+                    db.table('chart_cache').upsert(rows[i:i+500]).execute()
             except: pass
 
         return df, interval
