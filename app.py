@@ -881,8 +881,11 @@ with tab5:
 
             # Chart
             hold_min = trade.get('Hålltid (min)')
+            auto_intraday = hold_min is not None and not (isinstance(hold_min, float) and math.isnan(hold_min)) and hold_min < 1440
+            use_5m = st.checkbox("5-minuters graf", value=auto_intraday, key=f"5m_{tk}")
+            forced_hold = 60 if use_5m else 9999  # force 5m or daily
             with st.spinner(f"Hämtar kursdata för {trade['Ticker']}..."):
-                chart_result = fetch_chart_data(trade['Ticker'], trade['Entry Datum'], trade['Datum'], hold_min)
+                chart_result = fetch_chart_data(trade['Ticker'], trade['Entry Datum'], trade['Datum'], forced_hold)
                 chart_df, chart_interval = chart_result if isinstance(chart_result, tuple) else (chart_result, '1d')
             chart_label = "5 MIN" if chart_interval == '5m' else "DAGLIG"
             st.markdown(f'<div class="section-header">KURSGRAF — {chart_label}</div>', unsafe_allow_html=True)
