@@ -32,7 +32,7 @@ GRADES     = ["–", "A", "B", "C", "F"]
 ANNOTATIONS_FILE = os.path.join(base_dir, "annotations.json")
 
 # --- PAGE ---
-st.set_page_config(page_title="Trading Journal", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Johans Trading", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap');
@@ -325,7 +325,7 @@ def mcard(label, value, fmt="dollar", sub=None):
 
 
 # --- HEADER ---
-st.markdown("""<div class="app-header"><span class="app-title">TRADING JOURNAL</span><span class="app-subtitle">// TRADEZERO ACCOUNT ANALYTICS</span></div>""", unsafe_allow_html=True)
+st.markdown("""<div class="app-header"><span class="app-title">JOHANS TRADING</span><span class="app-subtitle">// TRADEZERO ACCOUNT ANALYTICS</span></div>""", unsafe_allow_html=True)
 
 # --- CONTROLS (top bar instead of sidebar) ---
 ctrl_col1, ctrl_col2 = st.columns([3, 1])
