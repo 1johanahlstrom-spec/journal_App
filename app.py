@@ -585,6 +585,61 @@ if not filtered.empty:
     with cc3: st.markdown(mcard("SNITT / MÅNAD", -avg_monthly_c, "dollar"), unsafe_allow_html=True)
     with cc4: st.markdown(mcard("NETTO EFTER COURTAGE", total_pnl - total_courtage, "dollar"), unsafe_allow_html=True)
 
+    # --- WIRE IN / OUT ---
+    st.markdown('<div class="section-header">INSÄTTNINGAR & UTTAG</div>', unsafe_allow_html=True)
+
+    # Load wires from annotations
+    wires = st.session_state.annotations.get('_wires', [])
+    total_wire_in  = sum(w['amount'] for w in wires if w['type'] == 'IN')
+    total_wire_out = sum(w['amount'] for w in wires if w['type'] == 'UT')
+    net_wire = total_wire_in - total_wire_out
+
+    w1, w2, w3 = st.columns(3)
+    with w1: st.markdown(mcard("INSÄTTNINGAR", total_wire_in, "dollar"), unsafe_allow_html=True)
+    with w2: st.markdown(mcard("UTTAG", -total_wire_out, "dollar"), unsafe_allow_html=True)
+    with w3: st.markdown(mcard("NETTO INSATT", net_wire, "dollar"), unsafe_allow_html=True)
+
+    with st.expander("➕ LÄGG TILL WIRE", expanded=False):
+        wc1, wc2, wc3, wc4 = st.columns([1, 1, 1, 1])
+        with wc1:
+            wire_type = st.selectbox("Typ", ["IN", "UT"], key="wire_type")
+        with wc2:
+            wire_amount = st.number_input("Belopp ($)", min_value=0.0, step=100.0, key="wire_amount")
+        with wc3:
+            wire_date = st.date_input("Datum", value=datetime.today(), key="wire_date")
+        with wc4:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("💾 SPARA WIRE", key="save_wire"):
+                if wire_amount > 0:
+                    if '_wires' not in st.session_state.annotations:
+                        st.session_state.annotations['_wires'] = []
+                    st.session_state.annotations['_wires'].append({
+                        'type': wire_type,
+                        'amount': float(wire_amount),
+                        'date': str(wire_date),
+                    })
+                    save_annotations()
+                    st.success(f"Wire {wire_type} ${wire_amount:,.0f} sparad")
+                    st.rerun()
+
+        # Show existing wires
+        if wires:
+            for i, w in enumerate(sorted(wires, key=lambda x: x['date'], reverse=True)):
+                wire_color = "#00ff88" if w['type'] == 'IN' else "#ff3366"
+                col_w, col_del = st.columns([4, 1])
+                with col_w:
+                    st.markdown(
+                        f'<div style="font-family:Space Mono,monospace;font-size:0.8rem;padding:4px 0;border-bottom:1px solid #1e1e2e;">'
+                        f'<span style="color:{wire_color};">{w["type"]}</span>  '
+                        f'{w["date"]}  '
+                        f'<span style="color:{wire_color};">${w["amount"]:,.0f}</span></div>',
+                        unsafe_allow_html=True)
+                with col_del:
+                    if st.button("🗑", key=f"del_wire_{i}_{w['date']}"):
+                        st.session_state.annotations['_wires'].remove(w)
+                        save_annotations()
+                        st.rerun()
+
 
 # --- TABS ---
 st.markdown('<div class="section-header">ANALYS</div>', unsafe_allow_html=True)
