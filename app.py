@@ -49,7 +49,7 @@ def get_db():
 st.set_page_config(page_title="Johans Trading", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap');
 :root{--bg:#0a0a0f;--surface:#111118;--border:#1e1e2e;--accent:#00ff88;--accent2:#ff3366;--text:#e8e8f0;--muted:#555570;--card:#13131c;}
 html,body,.stApp{background-color:var(--bg)!important;color:var(--text)!important;font-family:'Syne',sans-serif;}
 .stApp>header{background:transparent!important;}
@@ -64,7 +64,7 @@ html,body,.stApp{background-color:var(--bg)!important;color:var(--text)!importan
 .metric-sub{font-family:'Space Mono',monospace;font-size:0.75rem;color:#ffffff;margin-top:0.2rem;}
 .positive{color:#00ff88;}.negative{color:#ff3366;}.neutral{color:var(--text);}
 .app-header{display:flex;align-items:baseline;gap:1rem;margin-bottom:1.2rem;border-bottom:1px solid var(--border);padding-bottom:1rem;}
-.app-title{font-family:'Syne',sans-serif;font-weight:800;font-size:2rem;letter-spacing:-0.04em;white-space:nowrap;transform:scaleX(0.8);transform-origin:left;background:linear-gradient(135deg,#00ff88 0%,#00ccff 50%,#00ff88 100%);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:titleShine 3s linear infinite;filter:drop-shadow(0 0 12px rgba(0,255,136,0.3));}
+.app-title{font-family:'Bebas Neue',sans-serif;font-weight:400;font-size:2.8rem;letter-spacing:0.05em;white-space:nowrap;background:linear-gradient(135deg,#00ff88 0%,#00ccff 50%,#00ff88 100%);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:titleShine 3s linear infinite;filter:drop-shadow(0 0 12px rgba(0,255,136,0.3));}
 @keyframes titleShine{0%{background-position:0% center}100%{background-position:200% center}}
 .app-subtitle{font-family:'Space Mono',monospace;font-size:0.9rem;color:#bbbbcc;letter-spacing:0.1em;}
 .section-header{font-family:'Space Mono',monospace;font-size:0.95rem;letter-spacing:0.2em;color:#bbbbcc;text-transform:uppercase;margin:1rem 0 0.7rem 0;padding-bottom:0.4rem;border-bottom:1px solid var(--border);}
