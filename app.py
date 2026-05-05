@@ -222,8 +222,15 @@ def fetch_chart_data(ticker, start_date, end_date, hold_minutes=None):
                 if cached.data and len(cached.data) > 5:
                     df = pd.DataFrame(cached.data)
                     df['Date'] = pd.to_datetime(df['date'])
-                    df = df.rename(columns={'open':'Open','high':'High','low':'Low','close':'Close','volume':'Volume'})
-                    return df[['Date','Open','High','Low','Close','Volume']], interval
+                    # Validate: check cached dates are within expected range
+                    expected_start = pd.to_datetime(start)
+                    if df['Date'].min() >= expected_start - timedelta(days=5):
+                        df = df.rename(columns={'open':'Open','high':'High','low':'Low','close':'Close','volume':'Volume'})
+                        return df[['Date','Open','High','Low','Close','Volume']], interval
+                    else:
+                        # Bad cache data - delete it
+                        db.table('chart_cache').delete()\
+                            .eq('ticker', ticker).eq('interval', interval).execute()
             except: pass
 
         # Fetch from Yahoo
@@ -245,20 +252,22 @@ def fetch_chart_data(ticker, start_date, end_date, hold_minutes=None):
             df = df.rename(columns={'Datetime': 'Date'})
 
         # Save to Supabase cache
-        if db:
+        if db and not df.empty:
             try:
-                rows = []
-                for _, r in df.iterrows():
-                    rows.append({
-                        'ticker': ticker, 'interval': interval,
-                        'date': r['Date'].isoformat(),
-                        'open': float(r['Open']), 'high': float(r['High']),
-                        'low': float(r['Low']), 'close': float(r['Close']),
-                        'volume': int(r.get('Volume', 0) or 0),
-                    })
-                # Batch upsert in chunks of 500
-                for i in range(0, len(rows), 500):
-                    db.table('chart_cache').upsert(rows[i:i+500]).execute()
+                # Only cache if dates look reasonable (within last 2 years)
+                min_date = df['Date'].min()
+                if min_date.year >= 2025:
+                    rows = []
+                    for _, r in df.iterrows():
+                        rows.append({
+                            'ticker': ticker, 'interval': interval,
+                            'date': r['Date'].isoformat(),
+                            'open': float(r['Open']), 'high': float(r['High']),
+                            'low': float(r['Low']), 'close': float(r['Close']),
+                            'volume': int(r.get('Volume', 0) or 0),
+                        })
+                    for i in range(0, len(rows), 500):
+                        db.table('chart_cache').upsert(rows[i:i+500]).execute()
             except: pass
 
         return df, interval
