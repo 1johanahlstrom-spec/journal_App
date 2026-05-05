@@ -1045,6 +1045,11 @@ with tab5:
 
             if chart_df is not None and not isinstance(chart_df, str) and not chart_df.empty:
                 from plotly.subplots import make_subplots
+
+                # Convert timezone to US/Eastern BEFORE building chart (TradeZero uses ET)
+                if chart_df['Date'].dt.tz is not None:
+                    chart_df['Date'] = chart_df['Date'].dt.tz_convert('US/Eastern').dt.tz_localize(None)
+
                 fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True,
                     vertical_spacing=0.03, row_heights=[0.75, 0.25])
                 fig_chart.add_trace(go.Candlestick(
@@ -1061,8 +1066,6 @@ with tab5:
 
                 entry_dt = pd.to_datetime(trade.get('Entry Tidsstämpel') or trade['Entry Datum'])
                 exit_dt  = pd.to_datetime(trade.get('Tidsstämpel') or trade['Datum'])
-                if chart_df['Date'].dt.tz is not None:
-                    chart_df['Date'] = chart_df['Date'].dt.tz_localize(None)
                 if hasattr(entry_dt, 'tzinfo') and entry_dt.tzinfo is not None:
                     entry_dt = entry_dt.tz_localize(None)
                 if hasattr(exit_dt, 'tzinfo') and exit_dt.tzinfo is not None:
