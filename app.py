@@ -344,7 +344,7 @@ def compute_fifo(all_trades):
                         dur = round((ts - entry_time).total_seconds()/60) if entry_time else None
                         valid_trades.append({'Ticker':symbol, 'Vinst ($)':round(pnl,2), 'Vinst %':round(pct,1),
                             'Riktning':'SHORT', 'Datum':datum, 'Entry Datum':entry_date or datum,
-                            'Tidsstämpel':ts, 'Hålltid (min)':dur, 'Courtage':courtage})
+                            'Tidsstämpel':ts, 'Entry Tidsstämpel':entry_time, 'Hålltid (min)':dur, 'Courtage':courtage})
                     # Position flip: buy more than short position → open long
                     flip_qty = qty - close_qty
                     new_position = position + qty
@@ -376,7 +376,7 @@ def compute_fifo(all_trades):
                         dur = round((ts - entry_time).total_seconds()/60) if entry_time else None
                         valid_trades.append({'Ticker':symbol, 'Vinst ($)':round(pnl,2), 'Vinst %':round(pct,1),
                             'Riktning':'LONG', 'Datum':datum, 'Entry Datum':entry_date or datum,
-                            'Tidsstämpel':ts, 'Hålltid (min)':dur, 'Courtage':courtage})
+                            'Tidsstämpel':ts, 'Entry Tidsstämpel':entry_time, 'Hålltid (min)':dur, 'Courtage':courtage})
                     # Position flip: sell more than long position → open short
                     flip_qty = qty - close_qty
                     new_position = position - qty
@@ -1059,14 +1059,26 @@ with tab5:
                     fig_chart.add_trace(go.Bar(x=chart_df['Date'], y=chart_df['Volume'],
                         marker_color=vol_colors, opacity=0.4, showlegend=False), row=2, col=1)
 
-                entry_dt = pd.to_datetime(trade['Entry Datum'])
-                exit_dt  = pd.to_datetime(trade['Datum'])
+                entry_dt = pd.to_datetime(trade.get('Entry Tidsstämpel') or trade['Entry Datum'])
+                exit_dt  = pd.to_datetime(trade.get('Tidsstämpel') or trade['Datum'])
                 if chart_df['Date'].dt.tz is not None:
                     chart_df['Date'] = chart_df['Date'].dt.tz_localize(None)
+                if hasattr(entry_dt, 'tzinfo') and entry_dt.tzinfo is not None:
+                    entry_dt = entry_dt.tz_localize(None)
+                if hasattr(exit_dt, 'tzinfo') and exit_dt.tzinfo is not None:
+                    exit_dt = exit_dt.tz_localize(None)
                 entry_color = '#00ff88' if trade['Riktning'] == 'LONG' else '#ff3366'
                 exit_color  = '#ff3366' if trade['Riktning'] == 'LONG' else '#00ff88'
-                entry_row = chart_df[chart_df['Date'] >= entry_dt].head(1)
-                exit_row  = chart_df[chart_df['Date'] >= exit_dt].head(1)
+                # Find nearest candle to entry/exit time
+                if chart_interval == '5m':
+                    # For intraday: find closest candle by time difference
+                    time_diffs_entry = (chart_df['Date'] - entry_dt).abs()
+                    time_diffs_exit  = (chart_df['Date'] - exit_dt).abs()
+                    entry_row = chart_df.loc[[time_diffs_entry.idxmin()]]
+                    exit_row  = chart_df.loc[[time_diffs_exit.idxmin()]]
+                else:
+                    entry_row = chart_df[chart_df['Date'] >= entry_dt].head(1)
+                    exit_row  = chart_df[chart_df['Date'] >= exit_dt].head(1)
                 if not entry_row.empty:
                     fig_chart.add_trace(go.Scatter(
                         x=[entry_row['Date'].iloc[0]], y=[float(entry_row['Low'].iloc[0]) * 0.98],
