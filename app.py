@@ -1048,7 +1048,11 @@ with tab5:
 
                 # Convert timezone to US/Eastern BEFORE building chart (TradeZero uses ET)
                 if chart_df['Date'].dt.tz is not None:
-                    chart_df['Date'] = chart_df['Date'].dt.tz_convert('US/Eastern').dt.tz_localize(None)
+                    try:
+                        chart_df['Date'] = chart_df['Date'].dt.tz_convert('US/Eastern').dt.tz_localize(None)
+                    except:
+                        # Fallback: assume UTC, subtract 4h (EDT)
+                        chart_df['Date'] = chart_df['Date'].dt.tz_localize(None) - timedelta(hours=4)
 
                 fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True,
                     vertical_spacing=0.03, row_heights=[0.75, 0.25])
