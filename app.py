@@ -325,7 +325,7 @@ def compute_fifo(all_trades):
     valid_trades = []
 
     for symbol, group in df.groupby('Symbol'):
-        long_fifo, short_fifo, position = [], [], 0.0
+        long_fifo, short_fifo, position = [], [], 0.0  # fifo entries: (qty, price, timestamp)
         entry_time, entry_date = None, None
 
         for _, row in group.iterrows():
@@ -341,33 +341,33 @@ def compute_fifo(all_trades):
             if side == 'BUY':
                 if position < -0.01:
                     # Closing short (fully or partially)
-                    close_qty = min(qty, abs(position))  # only close what we have
+                    close_qty = min(qty, abs(position))
                     remaining, pnl, cost = close_qty, 0.0, 0.0
+                    fifo_entry_ts, fifo_entry_date = None, None
                     while remaining > 0.01 and short_fifo:
-                        oq, op = short_fifo[0]; m = min(remaining, oq)
+                        oq, op, ots = short_fifo[0]; m = min(remaining, oq)
+                        if fifo_entry_ts is None: fifo_entry_ts, fifo_entry_date = ots, ots.strftime('%Y-%m-%d') if hasattr(ots, 'strftime') else datum
                         pnl += m*(op-price); cost += m*op
                         remaining -= m; oq -= m
                         if oq < 0.01: short_fifo.pop(0)
-                        else: short_fifo[0] = (oq, op)
+                        else: short_fifo[0] = (oq, op, ots)
                     if cost > 0:
                         pct = (pnl/cost*100)
-                        dur = round((ts - entry_time).total_seconds()/60) if entry_time else None
+                        actual_entry = fifo_entry_ts or entry_time
+                        dur = round((ts - actual_entry).total_seconds()/60) if actual_entry else None
                         valid_trades.append({'Ticker':symbol, 'Vinst ($)':round(pnl,2), 'Vinst %':round(pct,1),
-                            'Riktning':'SHORT', 'Datum':datum, 'Entry Datum':entry_date or datum,
-                            'Tidsstämpel':ts, 'Entry Tidsstämpel':entry_time, 'Hålltid (min)':dur, 'Courtage':courtage})
-                    # Position flip: buy more than short position → open long
+                            'Riktning':'SHORT', 'Datum':datum, 'Entry Datum':fifo_entry_date or entry_date or datum,
+                            'Tidsstämpel':ts, 'Entry Tidsstämpel':fifo_entry_ts or entry_time, 'Hålltid (min)':dur, 'Courtage':courtage})
                     flip_qty = qty - close_qty
                     new_position = position + qty
                     if abs(new_position) < 0.01:
-                        entry_time = entry_date = None  # fully closed
+                        entry_time = entry_date = None
                     elif new_position > 0.01 and position < -0.01:
-                        # Flipped to long
                         entry_time, entry_date = ts, datum
-                        long_fifo.append((flip_qty, price))
+                        long_fifo.append((flip_qty, price, ts))
                 else:
-                    # Opening/adding to long
                     if abs(position) < 0.01: entry_time, entry_date = ts, datum
-                    long_fifo.append((qty, price))
+                    long_fifo.append((qty, price, ts))
                 position += qty
 
             else:  # SELL
@@ -375,29 +375,31 @@ def compute_fifo(all_trades):
                     # Closing long (fully or partially)
                     close_qty = min(qty, position)
                     remaining, pnl, cost = close_qty, 0.0, 0.0
+                    fifo_entry_ts, fifo_entry_date = None, None
                     while remaining > 0.01 and long_fifo:
-                        oq, op = long_fifo[0]; m = min(remaining, oq)
+                        oq, op, ots = long_fifo[0]; m = min(remaining, oq)
+                        if fifo_entry_ts is None: fifo_entry_ts, fifo_entry_date = ots, ots.strftime('%Y-%m-%d') if hasattr(ots, 'strftime') else datum
                         pnl += m*(price-op); cost += m*op
                         remaining -= m; oq -= m
                         if oq < 0.01: long_fifo.pop(0)
-                        else: long_fifo[0] = (oq, op)
+                        else: long_fifo[0] = (oq, op, ots)
                     if cost > 0:
                         pct = (pnl/cost*100)
-                        dur = round((ts - entry_time).total_seconds()/60) if entry_time else None
+                        actual_entry = fifo_entry_ts or entry_time
+                        dur = round((ts - actual_entry).total_seconds()/60) if actual_entry else None
                         valid_trades.append({'Ticker':symbol, 'Vinst ($)':round(pnl,2), 'Vinst %':round(pct,1),
-                            'Riktning':'LONG', 'Datum':datum, 'Entry Datum':entry_date or datum,
-                            'Tidsstämpel':ts, 'Entry Tidsstämpel':entry_time, 'Hålltid (min)':dur, 'Courtage':courtage})
-                    # Position flip: sell more than long position → open short
+                            'Riktning':'LONG', 'Datum':datum, 'Entry Datum':fifo_entry_date or entry_date or datum,
+                            'Tidsstämpel':ts, 'Entry Tidsstämpel':fifo_entry_ts or entry_time, 'Hålltid (min)':dur, 'Courtage':courtage})
                     flip_qty = qty - close_qty
                     new_position = position - qty
                     if abs(new_position) < 0.01:
                         entry_time = entry_date = None
                     elif new_position < -0.01 and position > 0.01:
                         entry_time, entry_date = ts, datum
-                        short_fifo.append((flip_qty, price))
+                        short_fifo.append((flip_qty, price, ts))
                 else:
                     if abs(position) < 0.01: entry_time, entry_date = ts, datum
-                    short_fifo.append((qty, price))
+                    short_fifo.append((qty, price, ts))
                 position -= qty
     return pd.DataFrame(valid_trades)
 
