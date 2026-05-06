@@ -305,6 +305,43 @@ def fetch_news(tickers):
         return all_news
     except: return []
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_earnings(tickers):
+    try:
+        import yfinance as yf
+        earnings = {}
+        for ticker in tickers:
+            try:
+                t = yf.Ticker(ticker)
+                cal = t.calendar
+                if cal is not None and not cal.empty if hasattr(cal, 'empty') else cal:
+                    if isinstance(cal, dict):
+                        ed = cal.get('Earnings Date', [])
+                        earnings[ticker] = {'next': str(ed[0])[:10] if ed else '–'}
+                    elif isinstance(cal, pd.DataFrame):
+                        earnings[ticker] = {'next': str(cal.iloc[0, 0])[:10] if not cal.empty else '–'}
+                    else:
+                        earnings[ticker] = {'next': '–'}
+                else:
+                    earnings[ticker] = {'next': '–'}
+                # Get last earnings from earnings_dates
+                try:
+                    ed = t.earnings_dates
+                    if ed is not None and not ed.empty:
+                        past = ed[ed.index <= pd.Timestamp.now(tz='US/Eastern')]
+                        if not past.empty:
+                            earnings[ticker]['last'] = str(past.index[0])[:10]
+                        else:
+                            earnings[ticker]['last'] = '–'
+                    else:
+                        earnings[ticker]['last'] = '–'
+                except:
+                    earnings[ticker]['last'] = '–'
+            except:
+                earnings[ticker] = {'next': '–', 'last': '–'}
+        return earnings
+    except: return {}
+
 
 # --- FIFO ENGINE ---
 def compute_fifo(all_trades):
