@@ -313,17 +313,35 @@ def fetch_earnings(tickers):
         for ticker in tickers:
             try:
                 t = yf.Ticker(ticker)
-                dates = t.earnings_dates
-                if dates is not None and not dates.empty:
-                    now = pd.Timestamp.now(tz=dates.index.tz) if dates.index.tz else pd.Timestamp.now()
-                    past = dates[dates.index <= now]
-                    future = dates[dates.index > now]
-                    result[ticker] = {
-                        'last': past.index[0].strftime('%Y-%m-%d') if not past.empty else None,
-                        'next': future.index[-1].strftime('%Y-%m-%d') if not future.empty else None,
-                    }
-                else:
-                    result[ticker] = {'last': None, 'next': None}
+                last_date, next_date = None, None
+
+                # Try earnings_dates first (most complete)
+                try:
+                    dates = t.earnings_dates
+                    if dates is not None and not dates.empty:
+                        all_dates = dates.index.sort_values()
+                        now = pd.Timestamp.now(tz=all_dates.tz) if all_dates.tz else pd.Timestamp.now()
+                        past = all_dates[all_dates <= now]
+                        future = all_dates[all_dates > now]
+                        if not past.empty:
+                            last_date = past[-1].strftime('%Y-%m-%d')
+                        if not future.empty:
+                            next_date = future[0].strftime('%Y-%m-%d')
+                except: pass
+
+                # Try calendar as backup for next date
+                if not next_date:
+                    try:
+                        cal = t.calendar
+                        if cal is not None:
+                            if isinstance(cal, dict):
+                                ed = cal.get('Earnings Date', [])
+                                if ed: next_date = str(ed[0])[:10]
+                            elif isinstance(cal, pd.DataFrame) and 'Earnings Date' in cal.columns:
+                                next_date = str(cal['Earnings Date'].iloc[0])[:10]
+                    except: pass
+
+                result[ticker] = {'last': last_date, 'next': next_date}
             except:
                 result[ticker] = {'last': None, 'next': None}
         return result
