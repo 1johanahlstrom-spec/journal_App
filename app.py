@@ -309,6 +309,30 @@ def fetch_news(tickers):
 def fetch_earnings(tickers):
     try:
         import yfinance as yf
+        result = {}
+        for ticker in tickers:
+            try:
+                t = yf.Ticker(ticker)
+                dates = t.earnings_dates
+                if dates is not None and not dates.empty:
+                    now = pd.Timestamp.now(tz=dates.index.tz) if dates.index.tz else pd.Timestamp.now()
+                    past = dates[dates.index <= now]
+                    future = dates[dates.index > now]
+                    result[ticker] = {
+                        'last': past.index[0].strftime('%Y-%m-%d') if not past.empty else None,
+                        'next': future.index[-1].strftime('%Y-%m-%d') if not future.empty else None,
+                    }
+                else:
+                    result[ticker] = {'last': None, 'next': None}
+            except:
+                result[ticker] = {'last': None, 'next': None}
+        return result
+    except: return {}
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_earnings(tickers):
+    try:
+        import yfinance as yf
         earnings = {}
         for ticker in tickers:
             try:
@@ -660,27 +684,42 @@ p1, p2 = st.columns(2)
 with p1: st.markdown(mcard("LONG", len(longs), "int", sub=" | ".join(p['symbol'] for p in longs) or "–"), unsafe_allow_html=True)
 with p2: st.markdown(mcard("SHORT", len(shorts), "int", sub=" | ".join(p['symbol'] for p in shorts) or "–"), unsafe_allow_html=True)
 
-# --- NEWS ---
+# --- NEWS & EARNINGS ---
 if open_pos:
-    with st.expander("📰 NYHETER OM ÖPPNA POSITIONER", expanded=False):
+    with st.expander("📰 NYHETER & RAPPORTDATUM", expanded=False):
         open_tickers = [p['symbol'] for p in open_pos]
-        with st.spinner("Hämtar nyheter..."):
+        with st.spinner("Hämtar nyheter och rapportdatum..."):
             news_items = fetch_news(open_tickers)
-        if news_items:
-            for ticker in open_tickers:
-                ticker_news = [n for n in news_items if n['ticker'] == ticker]
-                if ticker_news:
-                    st.markdown(f'<div class="section-header">{ticker}</div>', unsafe_allow_html=True)
-                    for n in ticker_news:
-                        link = f' <a href="{n["url"]}" target="_blank" style="color:#00ff88;text-decoration:none;">→ läs</a>' if n['url'] else ''
-                        st.markdown(
-                            f'<div style="padding:8px 0;border-bottom:1px solid #1e1e2e;">'
-                            f'<span style="font-family:Space Mono,monospace;font-size:0.85rem;color:#e8e8f0;">{n["title"]}</span>'
-                            f'<br><span style="font-family:Space Mono,monospace;font-size:0.7rem;color:#555570;">{n["date"]}  •  {n["provider"]}</span>'
-                            f'{link}</div>',
-                            unsafe_allow_html=True)
-        else:
-            st.info("Inga nyheter hittades.")
+            earnings = fetch_earnings(open_tickers)
+
+        for ticker in open_tickers:
+            st.markdown(f'<div class="section-header">{ticker}</div>', unsafe_allow_html=True)
+
+            # Earnings dates
+            earn = earnings.get(ticker, {})
+            last_earn = earn.get('last', '–') or '–'
+            next_earn = earn.get('next', '–') or '–'
+            next_color = '#ff6633' if next_earn != '–' else '#555570'
+            st.markdown(
+                f'<div style="font-family:Space Mono,monospace;font-size:0.8rem;padding:6px 0;margin-bottom:6px;'
+                f'background:#13131c;border:1px solid #1e1e2e;border-radius:6px;padding:8px 12px;">'
+                f'📅 Senaste rapport: <span style="color:#bbbbcc;">{last_earn}</span>'
+                f'  •  Nästa rapport: <span style="color:{next_color};font-weight:700;">{next_earn}</span>'
+                f'</div>', unsafe_allow_html=True)
+
+            # News
+            ticker_news = [n for n in news_items if n['ticker'] == ticker]
+            if ticker_news:
+                for n in ticker_news:
+                    link = f' <a href="{n["url"]}" target="_blank" style="color:#00ff88;text-decoration:none;">→ läs</a>' if n['url'] else ''
+                    st.markdown(
+                        f'<div style="padding:8px 0;border-bottom:1px solid #1e1e2e;">'
+                        f'<span style="font-family:Space Mono,monospace;font-size:0.85rem;color:#e8e8f0;">{n["title"]}</span>'
+                        f'<br><span style="font-family:Space Mono,monospace;font-size:0.7rem;color:#555570;">{n["date"]}  •  {n["provider"]}</span>'
+                        f'{link}</div>',
+                        unsafe_allow_html=True)
+            else:
+                st.markdown('<div style="font-family:Space Mono,monospace;font-size:0.75rem;color:#555570;padding:4px 0;">Inga nyheter</div>', unsafe_allow_html=True)
 
 
 # --- COURTAGE (from raw API data) ---
