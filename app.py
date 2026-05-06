@@ -1098,6 +1098,11 @@ with tab5:
                 else:
                     entry_row = chart_df[chart_df['Date'] >= entry_dt].head(1)
                     exit_row  = chart_df[chart_df['Date'] >= exit_dt].head(1)
+                # Fallback: use first/last candle if dates outside data range
+                if entry_row.empty and not chart_df.empty:
+                    entry_row = chart_df.head(1)
+                if exit_row.empty and not chart_df.empty:
+                    exit_row = chart_df.tail(1)
                 if not entry_row.empty:
                     fig_chart.add_trace(go.Scatter(
                         x=[entry_row['Date'].iloc[0]], y=[float(entry_row['Low'].iloc[0]) * 0.98],
