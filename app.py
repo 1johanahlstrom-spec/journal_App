@@ -5,6 +5,7 @@ from pathlib import Path
 import requests
 import pandas as pd
 import streamlit as st
+st.set_page_config(page_title="Johans Trading", page_icon="🚀")
 import plotly.graph_objects as go
 import plotly.express as px
 from dotenv import load_dotenv
