@@ -271,6 +271,18 @@ def fetch_chart_data(ticker, start_date, end_date, hold_minutes=None):
                         db.table('chart_cache').upsert(rows[i:i+500]).execute()
             except: pass
 
+        # Final column normalization
+        col_remap = {}
+        for c in df.columns:
+            cl = c.lower()
+            if cl in ('date','datetime') and c != 'Date': col_remap[c] = 'Date'
+            elif cl == 'open' and c != 'Open': col_remap[c] = 'Open'
+            elif cl == 'high' and c != 'High': col_remap[c] = 'High'
+            elif cl == 'low' and c != 'Low': col_remap[c] = 'Low'
+            elif cl == 'close' and c != 'Close': col_remap[c] = 'Close'
+            elif cl == 'volume' and c != 'Volume': col_remap[c] = 'Volume'
+        if col_remap: df = df.rename(columns=col_remap)
+
         return df, interval
     except Exception as e:
         return str(e), '1d'
@@ -1149,26 +1161,11 @@ with tab5:
             chart_label = "5 MIN" if chart_interval == '5m' else "DAGLIG"
             st.markdown(f'<div class="section-header">KURSGRAF — {chart_label}</div>', unsafe_allow_html=True)
 
-            if chart_df is not None and not isinstance(chart_df, str) and not chart_df.empty:
+            if chart_df is not None and not isinstance(chart_df, str) and not chart_df.empty and 'Date' in chart_df.columns and 'Open' in chart_df.columns:
                 from plotly.subplots import make_subplots
 
-                # Normalize column names (cache/yfinance may use different names)
-                col_map = {}
-                for c in chart_df.columns:
-                    cl = c.lower()
-                    if cl == 'date' or cl == 'datetime': col_map[c] = 'Date'
-                    elif cl == 'open': col_map[c] = 'Open'
-                    elif cl == 'high': col_map[c] = 'High'
-                    elif cl == 'low': col_map[c] = 'Low'
-                    elif cl == 'close': col_map[c] = 'Close'
-                    elif cl == 'volume': col_map[c] = 'Volume'
-                if col_map: chart_df = chart_df.rename(columns=col_map)
-                if 'Date' not in chart_df.columns and chart_df.index.name in ('Date','Datetime','date'):
-                    chart_df = chart_df.reset_index()
-                    if 'date' in chart_df.columns: chart_df = chart_df.rename(columns={'date':'Date'})
-
                 # Convert timezone to US/Eastern BEFORE building chart (TradeZero uses ET)
-                if 'Date' in chart_df.columns and chart_df['Date'].dt.tz is not None:
+                if chart_df['Date'].dt.tz is not None:
                     try:
                         chart_df['Date'] = chart_df['Date'].dt.tz_convert('US/Eastern').dt.tz_localize(None)
                     except:
@@ -1249,6 +1246,8 @@ with tab5:
             else:
                 if isinstance(chart_df, str):
                     st.warning(f"Kunde inte hämta kursdata: {chart_df}")
+                elif chart_df is not None and not chart_df.empty:
+                    st.warning(f"Kursdata har fel format. Kolumner: {list(chart_df.columns)}")
                 else:
                     st.warning(f"Ingen kursdata tillgänglig för {trade['Ticker']}")
 
