@@ -5,7 +5,6 @@ from pathlib import Path
 import requests
 import pandas as pd
 import streamlit as st
-st.set_page_config(page_title="Johans Trading", page_icon="🚀")
 import plotly.graph_objects as go
 import plotly.express as px
 from dotenv import load_dotenv
@@ -1153,8 +1152,23 @@ with tab5:
             if chart_df is not None and not isinstance(chart_df, str) and not chart_df.empty:
                 from plotly.subplots import make_subplots
 
+                # Normalize column names (cache/yfinance may use different names)
+                col_map = {}
+                for c in chart_df.columns:
+                    cl = c.lower()
+                    if cl == 'date' or cl == 'datetime': col_map[c] = 'Date'
+                    elif cl == 'open': col_map[c] = 'Open'
+                    elif cl == 'high': col_map[c] = 'High'
+                    elif cl == 'low': col_map[c] = 'Low'
+                    elif cl == 'close': col_map[c] = 'Close'
+                    elif cl == 'volume': col_map[c] = 'Volume'
+                if col_map: chart_df = chart_df.rename(columns=col_map)
+                if 'Date' not in chart_df.columns and chart_df.index.name in ('Date','Datetime','date'):
+                    chart_df = chart_df.reset_index()
+                    if 'date' in chart_df.columns: chart_df = chart_df.rename(columns={'date':'Date'})
+
                 # Convert timezone to US/Eastern BEFORE building chart (TradeZero uses ET)
-                if chart_df['Date'].dt.tz is not None:
+                if 'Date' in chart_df.columns and chart_df['Date'].dt.tz is not None:
                     try:
                         chart_df['Date'] = chart_df['Date'].dt.tz_convert('US/Eastern').dt.tz_localize(None)
                     except:
