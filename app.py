@@ -275,13 +275,16 @@ def fetch_chart_data(ticker, start_date, end_date, hold_minutes=None):
         col_remap = {}
         for c in df.columns:
             cl = c.lower()
-            if cl in ('date','datetime') and c != 'Date': col_remap[c] = 'Date'
+            if cl in ('date','datetime','index') and c != 'Date': col_remap[c] = 'Date'
             elif cl == 'open' and c != 'Open': col_remap[c] = 'Open'
             elif cl == 'high' and c != 'High': col_remap[c] = 'High'
             elif cl == 'low' and c != 'Low': col_remap[c] = 'Low'
             elif cl == 'close' and c != 'Close': col_remap[c] = 'Close'
             elif cl == 'volume' and c != 'Volume': col_remap[c] = 'Volume'
         if col_remap: df = df.rename(columns=col_remap)
+        if 'Date' not in df.columns:
+            df = df.rename(columns={df.columns[0]: 'Date'})
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
 
         return df, interval
     except Exception as e:
